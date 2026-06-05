@@ -1,56 +1,39 @@
-# Agent instructions — Dousha
+# About This Project
 
-## Testing workflow (REQUIRED)
+`PROJECT.md`
 
-This is a menu-bar / accessibility app on macOS. You cannot test changes by running `swift build` or `swift run` directly — TCC permissions (Microphone, Accessibility, Speech Recognition) are bound to the signed bundle at `/Applications/Dousha.app`, and global hotkeys only work for the installed bundle the user already granted permissions to.
+# About Your Possible Roles
 
-Every time you want the user to test a change, you must:
+In each session, you take up **ONE AND ONLY ONE** of the following roles. Identify your role and read the corresponding instruction file after you receive the very first user message:
+- Orchestrator: You lead a team of subagents to implement mattpocock's development methodology. See `ORCHESTRATOR.md`
+-  Executor: You execute the skill(s) according to the task delegated to you (which is NOT a test). Read your instructions in `EXECUTOR.md`
+-  Tester: You exectue tests, or execute the skill(s) in a testing environment/serving evaluation purposes. Read your instructions in `TESTER.md`
+-  Reviewer: You review the project, spot problems, inconsistencies, risks, and design evaluations. Read your instructions in `REVIEWER.md`
+-  Builder: You write codes, revise old functions and build new ones. Read your instructions in `BUILDER.md`
+ 
+# Scope and Delegation
 
-1. **Ask the user to quit the running Dousha** (menu bar → Quit, or `killall Dousha`). `make install` will not replace a running `.app` cleanly, and the user will end up testing the old build without noticing.
-2. Run `make install` — this does release build, codesigns with `Dousha Local Dev`, and copies to `/Applications/Dousha.app`.
-3. Launch the new bundle (`open /Applications/Dousha.app`) or ask the user to launch it.
-4. Then ask the user to reproduce / test.
+**Focus on your own role.** Each role has its own scope. In order to maintain a clean context for your main objective, when part of the task is conspicuously more suitable for other roles listed above, consider delegate that part to a subagent with explicit role designation.
 
-Do **not** report a feature as "ready to test" after only `swift build` or `swift test`. Unit tests are fine for logic, but anything touching audio capture, hotkeys, HUD, or permissions must go through `make install` + relaunch before the user can verify it.
+# Notes on Documentation and Communication
 
-## Release workflow
+**Prioritizing communication with both the user and other agents through documents.**
 
-Public releases go to GitHub Releases as a signed + notarized DMG. The pipeline is fully wired in the `Makefile`:
+The user will add comments in the documents in callout blocks.
+Read all [!QUESTION] blocks first, respond in the session, discuss with the user **until the user confirms** that all questions are clarified or addressed. **DONNOT continue** while there are still unresponded questions. Append the final answer in a [!DONE] callout block right after user's [!QUESTION] in the commented document.
+Read all [!WARNING] and [!TIP] blocks. Comments in [!WARNING] blocks are of the highest priority.
+When responding to user's comments, write a **NEW FILE** as the next version of the document, **NEVER overwrite** the original document. Make sure the issues the user brings up are preperly addressed or resolved, and then **append** a concise response to the user after the corresponding comment under the [!DONE] callout.
 
-```
-make release VERSION=0.1.2
-```
+## Agent skills
 
-This target asserts the version matches `Resources/Info.plist`, requires a clean working tree, builds with hardened runtime + Developer ID, packs a DMG with an `/Applications` symlink, signs the DMG, submits to Apple notary, staples, and `gh release create`s the DMG at `vX.Y.Z`.
+### Issue tracker
 
-Per-release checklist:
+Issues are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
 
-1. Bump `Resources/Info.plist` — both `CFBundleShortVersionString` (semver) and `CFBundleVersion` (monotonic integer; notary rejects re-used build numbers for the same short version).
-2. Commit + push the bump.
-3. Run `make release VERSION=X.Y.Z`. Notarization usually takes 2–5 min; the target blocks until Accepted.
+### Triage labels
 
-One-time setup (per dev machine):
+This repository uses the default triage label vocabulary. See `docs/agents/triage-labels.md`.
 
-- Apple Developer ID cert must be in the login keychain with its private key.
-- Notary credentials stored as a keychain profile:
-  ```
-  xcrun notarytool store-credentials <YourNotaryProfile> \
-    --apple-id <your apple id> --team-id <YourTeamID> \
-    --password <app-specific password>
-  ```
-- Create a `Makefile.local` (gitignored) overriding the public Makefile placeholders:
-  ```
-  DEVELOPER_ID_IDENTITY := Developer ID Application: <Your Name> (<TEAMID>)
-  NOTARY_PROFILE        := <YourNotaryProfile>
-  ```
+### Domain docs
 
-### Release gotchas — do not regress
-
-- **Entitlements are mandatory for the dist build.** Hardened runtime auto-denies mic/camera access unless the relevant entitlement is present. `dist` passes `--entitlements Resources/Dousha.entitlements` (currently grants `com.apple.security.device.audio-input`). Symptom of the regression: TCC shows `kTCCServiceMicrophone com.dousha.app auth_value=2 auth_reason=4` (system_set deny), no prompt ever appears to the user. v0.1.0 shipped without this and was broken; v0.1.1 fixed it.
-- The DMG must also be codesigned (not just the .app) — `dist` does this. Notary will reject an unsigned DMG.
-
-## Other notes
-
-- Single signing identity for everything: `Developer ID Application: <Your Name> (<TEAMID>)`. Both `make install` (local dev) and `make release` (DMG) sign with it. TCC grants persist across both because the csreq is anchored to the team ID, not the cdhash — so a fresh local build and the latest DMG release share Mic / Speech / Accessibility approvals.
-- If the Developer ID cert is missing from the keychain (fresh clone / CI), the Makefile falls back to ad-hoc signing and TCC grants reset on every rebuild. Flag this if you see the ad-hoc fallback message.
-- `make reset-perms` wipes Mic / SpeechRecognition / Accessibility grants for `com.dousha.app`. Don't run it without asking.
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
