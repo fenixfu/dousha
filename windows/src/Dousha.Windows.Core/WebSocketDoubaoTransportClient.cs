@@ -5,15 +5,26 @@ namespace Dousha.Windows.Core;
 public sealed class WebSocketDoubaoTransportClient : IDoubaoTransportClient
 {
     private readonly ClientWebSocket _socket;
+    private readonly IDiagnosticLog? _diagnosticLog;
 
-    public WebSocketDoubaoTransportClient(ClientWebSocket socket)
+    public WebSocketDoubaoTransportClient(ClientWebSocket socket, IDiagnosticLog? diagnosticLog = null)
     {
         _socket = socket;
+        _diagnosticLog = diagnosticLog;
     }
 
     public async Task SendAsync(byte[] message, CancellationToken cancellationToken = default)
     {
-        await _socket.SendAsync(message, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+        try
+        {
+            await _socket.SendAsync(message, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+            _diagnosticLog?.Lifecycle($"doubao.websocket.sent bytes={message.Length} state={_socket.State}");
+        }
+        catch (Exception exception)
+        {
+            _diagnosticLog?.Error(DiagnosticArea.Doubao, "websocket_send_failed", exception);
+            throw;
+        }
     }
 
     public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
@@ -25,12 +36,16 @@ public sealed class WebSocketDoubaoTransportClient : IDoubaoTransportClient
             var result = await _socket.ReceiveAsync(buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
             {
+                _diagnosticLog?.Lifecycle(WebSocketDoubaoCloseDiagnostic.Format(
+                    _socket.CloseStatus,
+                    _socket.CloseStatusDescription));
                 throw new InvalidOperationException("Doubao WebSocket closed before a complete response was received.");
             }
 
             stream.Write(buffer, 0, result.Count);
             if (result.EndOfMessage)
             {
+                _diagnosticLog?.Lifecycle($"doubao.websocket.received bytes={stream.Length}");
                 return stream.ToArray();
             }
         }

@@ -74,7 +74,7 @@ public sealed class TrayApplicationLifetime : IDisposable
     {
         var backend = new DoubaoDictationBackend(
             _credentialStore,
-            new WebSocketDoubaoTransportClientFactory(),
+            new WebSocketDoubaoTransportClientFactory(_diagnosticLog),
             () => new ConcentusDoubaoOpusEncoder(),
             _diagnosticLog);
         var insertion = new ClipboardPasteInsertion(
