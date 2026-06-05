@@ -75,6 +75,8 @@ public sealed class DictationTriggerCommandRunnerTests
 
     private sealed class FakeCapture : IDictationCapture
     {
+        public event EventHandler<AudioFrame>? FrameCaptured;
+
         public CapturedAudio Audio { get; } = new(
             DoubaoAudioConstants.Pcm16KhzMono,
             [new AudioFrame(new byte[DoubaoAudioConstants.PcmBytesPerFrame], TimeSpan.Zero)]);
@@ -93,6 +95,11 @@ public sealed class DictationTriggerCommandRunnerTests
         {
             Stopped = true;
             return Task.FromResult(Audio);
+        }
+
+        public void Emit(AudioFrame frame)
+        {
+            FrameCaptured?.Invoke(this, frame);
         }
 
         public ValueTask DisposeAsync()

@@ -41,6 +41,81 @@ public sealed class DictationSessionControllerTests
     }
 
     [Fact]
+    public async Task StreamingBackendStartsOnRecordingStartFeedsCaptureFramesAndFinalizesOnStop()
+    {
+        var capture = new FakeCapture();
+        var backend = new FakeStreamingBackend("浣犲ソ");
+        var insertion = new FakeInsertion();
+        var statusSink = new FakeStatusSink();
+        var logger = new FakeDiagnosticLog();
+        var controller = new DictationSessionController(
+            new FakeCaptureFactory(capture),
+            backend,
+            insertion,
+            statusSink,
+            logger,
+            new FixedClock());
+
+        await controller.StartRecordingAsync();
+        capture.Emit(new AudioFrame([1, 2, 3, 4], TimeSpan.Zero));
+        capture.Emit(new AudioFrame([5, 6, 7, 8], TimeSpan.FromMilliseconds(20)));
+        await controller.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Success, controller.CurrentStatus);
+        Assert.True(backend.Started);
+        Assert.Equal([[1, 2, 3, 4], [5, 6, 7, 8]], backend.FedFrames.Select(frame => frame.Data.ToArray()));
+        Assert.True(backend.Stopped);
+        Assert.Null(backend.Audio);
+        Assert.Equal("浣犲ソ", insertion.InsertedText);
+        Assert.Equal([DictationStatus.Recording, DictationStatus.Transcribing, DictationStatus.Inserting, DictationStatus.Success], statusSink.Statuses);
+    }
+
+    [Fact]
+    public async Task StreamingBackendFailureReleasesControllerForLaterSession()
+    {
+        var firstCapture = new FakeCapture();
+        var firstBackend = new FakeStreamingBackend("ignored") { StopError = new InvalidOperationException("network detail") };
+        var firstInsertion = new FakeInsertion();
+        var firstStatusSink = new FakeStatusSink();
+        var logger = new FakeDiagnosticLog();
+        var errors = new List<NonBlockingErrorFeedback>();
+        var firstController = new DictationSessionController(
+            new FakeCaptureFactory(firstCapture),
+            firstBackend,
+            firstInsertion,
+            firstStatusSink,
+            logger,
+            new FixedClock());
+        firstController.NonBlockingError += errors.Add;
+
+        await firstController.StartRecordingAsync();
+        await firstController.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Error, firstController.CurrentStatus);
+        Assert.Single(errors);
+        Assert.True(firstCapture.Disposed);
+        Assert.True(firstBackend.Disposed);
+        Assert.Null(firstInsertion.InsertedText);
+
+        var secondCapture = new FakeCapture();
+        var secondBackend = new FakeStreamingBackend("second");
+        var secondInsertion = new FakeInsertion();
+        var secondController = new DictationSessionController(
+            new FakeCaptureFactory(secondCapture),
+            secondBackend,
+            secondInsertion,
+            new FakeStatusSink(),
+            logger,
+            new FixedClock());
+
+        await secondController.StartRecordingAsync();
+        await secondController.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Success, secondController.CurrentStatus);
+        Assert.Equal("second", secondInsertion.InsertedText);
+    }
+
+    [Fact]
     public async Task BackendErrorSurfacesNonBlockingFeedbackLogsAndCleansUp()
     {
         var capture = new FakeCapture();
@@ -249,6 +324,8 @@ public sealed class DictationSessionControllerTests
 
     private sealed class FakeCapture : IDictationCapture
     {
+        public event EventHandler<AudioFrame>? FrameCaptured;
+
         public CapturedAudio Audio { get; } = new(
             new AudioCaptureFormat(16000, 16, 1),
             [new AudioFrame([1, 2, 3, 4], TimeSpan.Zero), new AudioFrame([5, 6, 7, 8, 9, 10, 11, 12], TimeSpan.FromMilliseconds(20))]);
@@ -284,6 +361,11 @@ public sealed class DictationSessionControllerTests
             Disposed = true;
             return ValueTask.CompletedTask;
         }
+
+        public void Emit(AudioFrame frame)
+        {
+            FrameCaptured?.Invoke(this, frame);
+        }
     }
 
     private sealed class FakeBackend(string transcript) : IDictationBackend
@@ -300,6 +382,51 @@ public sealed class DictationSessionControllerTests
             return Error is null
                 ? Task.FromResult(transcript)
                 : Task.FromException<string>(Error);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FakeStreamingBackend(string transcript) : IStreamingDictationBackend
+    {
+        public bool Started { get; private set; }
+
+        public List<AudioFrame> FedFrames { get; } = [];
+
+        public bool Stopped { get; private set; }
+
+        public CapturedAudio? Audio { get; private set; }
+
+        public Exception? StopError { get; init; }
+
+        public bool Disposed { get; private set; }
+
+        public Task StartStreamingAsync(CancellationToken cancellationToken = default)
+        {
+            Started = true;
+            return Task.CompletedTask;
+        }
+
+        public Task FeedAudioAsync(AudioFrame frame, CancellationToken cancellationToken = default)
+        {
+            FedFrames.Add(frame);
+            return Task.CompletedTask;
+        }
+
+        public Task<string> StopStreamingAsync(CancellationToken cancellationToken = default)
+        {
+            Stopped = true;
+            return StopError is null ? Task.FromResult(transcript) : Task.FromException<string>(StopError);
+        }
+
+        public Task<string> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
+        {
+            Audio = audio;
+            return Task.FromResult(transcript);
         }
 
         public ValueTask DisposeAsync()

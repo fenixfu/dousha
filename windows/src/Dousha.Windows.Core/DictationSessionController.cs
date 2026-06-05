@@ -9,6 +9,9 @@ public sealed class DictationSessionController
     private readonly IDiagnosticLog _diagnosticLog;
     private readonly IClock _clock;
     private IDictationCapture? _capture;
+    private IStreamingDictationBackend? _streamingBackend;
+    private readonly List<Task> _feedTasks = [];
+    private readonly object _feedTasksLock = new();
 
     public DictationSessionController(
         IDictationCaptureFactory captureFactory,
@@ -40,6 +43,13 @@ public sealed class DictationSessionController
         _capture = _captureFactory.Create();
         try
         {
+            if (_backend is IStreamingDictationBackend streamingBackend)
+            {
+                _streamingBackend = streamingBackend;
+                await streamingBackend.StartStreamingAsync(cancellationToken);
+                _capture.FrameCaptured += OnCaptureFrameCaptured;
+            }
+
             await _capture.StartAsync(cancellationToken);
             _diagnosticLog.Lifecycle("session.started");
             SetStatus(DictationStatus.Recording);
@@ -62,12 +72,15 @@ public sealed class DictationSessionController
         {
             var audio = await _capture.StopAsync(cancellationToken);
             _diagnosticLog.AudioFrameCaptured(audio.ByteCount);
+            await WaitForPendingFeedsAsync();
 
             SetStatus(DictationStatus.Transcribing);
             string transcript;
             try
             {
-                transcript = await _backend.TranscribeAsync(audio, cancellationToken);
+                transcript = _streamingBackend is null
+                    ? await _backend.TranscribeAsync(audio, cancellationToken)
+                    : await _streamingBackend.StopStreamingAsync(cancellationToken);
             }
             catch (Exception exception)
             {
@@ -104,6 +117,7 @@ public sealed class DictationSessionController
     {
         if (_capture is not null && CurrentStatus is DictationStatus.Recording)
         {
+            _capture.FrameCaptured -= OnCaptureFrameCaptured;
             await _capture.StopAsync(cancellationToken);
         }
 
@@ -127,14 +141,45 @@ public sealed class DictationSessionController
         _statusSink.StatusChanged(status);
     }
 
+    private void OnCaptureFrameCaptured(object? sender, AudioFrame frame)
+    {
+        if (_streamingBackend is null)
+        {
+            return;
+        }
+
+        var task = _streamingBackend.FeedAudioAsync(frame);
+        lock (_feedTasksLock)
+        {
+            _feedTasks.Add(task);
+        }
+    }
+
+    private async Task WaitForPendingFeedsAsync()
+    {
+        Task[] tasks;
+        lock (_feedTasksLock)
+        {
+            tasks = [.. _feedTasks];
+            _feedTasks.Clear();
+        }
+
+        if (tasks.Length > 0)
+        {
+            await Task.WhenAll(tasks);
+        }
+    }
+
     private async Task CleanupAsync()
     {
         if (_capture is not null)
         {
+            _capture.FrameCaptured -= OnCaptureFrameCaptured;
             await _capture.DisposeAsync();
             _capture = null;
         }
 
+        _streamingBackend = null;
         await _backend.DisposeAsync();
         await _insertion.DisposeAsync();
         _diagnosticLog.Lifecycle("session.cleaned_up");

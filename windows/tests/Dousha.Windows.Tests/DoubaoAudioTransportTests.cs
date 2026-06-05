@@ -175,6 +175,108 @@ public sealed class DoubaoAudioTransportTests
     }
 
     [Fact]
+    public async Task StreamingTransportBuffersFedAudioUntilSessionStartedThenFlushesFrames()
+    {
+        using var encoder = new CapturingEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 200, "ok", ""))
+        ]);
+        var transport = new DoubaoAudioTransport(
+            client,
+            encoder,
+            new RecordingDiagnosticLog(),
+            new StepClock(DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000), TimeSpan.FromMilliseconds(1)));
+
+        await transport.FeedAudioAsync(new AudioFrame(new byte[DoubaoAudioConstants.PcmBytesPerFrame], TimeSpan.Zero));
+
+        Assert.Empty(client.SentMessages);
+
+        await transport.StartStreamingAsync(Credentials(), "request-1", contextHint: "", CancellationToken.None);
+
+        var startedRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal(["StartTask", "StartSession", "TaskRequest"], startedRequests.Select(request => request.MethodName));
+        Assert.Equal(FrameState.First, startedRequests.Last().FrameState);
+
+        var transcript = await transport.StopStreamingAsync(CancellationToken.None);
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("", transcript);
+        Assert.Equal(["StartTask", "StartSession", "TaskRequest", "TaskRequest", "FinishSession"], sentRequests.Select(request => request.MethodName));
+        Assert.Equal(FrameState.Last, sentRequests[^2].FrameState);
+        Assert.Contains("\"finish_audio\":true", sentRequests[^2].Payload);
+    }
+
+    [Fact]
+    public async Task StreamingTransportFinishWaitIsBounded()
+    {
+        using var encoder = new CapturingEncoder();
+        var client = new WaitingDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", ""))
+        ]);
+        var transport = new DoubaoAudioTransport(
+            client,
+            encoder,
+            new RecordingDiagnosticLog(),
+            new StepClock(DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000), TimeSpan.FromMilliseconds(1)),
+            finishTimeout: TimeSpan.FromMilliseconds(20));
+
+        await transport.StartStreamingAsync(Credentials(), "request-1", contextHint: "", CancellationToken.None);
+        await transport.FeedAudioAsync(new AudioFrame(new byte[DoubaoAudioConstants.PcmBytesPerFrame], TimeSpan.Zero));
+
+        var transcript = await transport.StopStreamingAsync(CancellationToken.None);
+
+        Assert.Equal("", transcript);
+        Assert.Equal("FinishSession", DoubaoAsrRequest.Decode(client.SentMessages.Last()).MethodName);
+    }
+
+    [Fact]
+    public async Task StreamingTransportAssemblesCommittedSegmentsAndRescuesShrinkingInterimWithoutTranscriptLogs()
+    {
+        using var encoder = new CapturingEncoder();
+        var diagnostics = new RecordingDiagnosticLog();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+                "request-1",
+                "TaskResponse",
+                200,
+                "ok",
+                "{\"results\":[{\"text\":\"first long interim\",\"is_interim\":true,\"is_vad_finished\":false}]}")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+                "request-1",
+                "TaskResponse",
+                200,
+                "ok",
+                "{\"results\":[{\"text\":\"two\",\"is_interim\":true,\"is_vad_finished\":false}]}")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+                "request-1",
+                "TaskResponse",
+                200,
+                "ok",
+                "{\"results\":[{\"text\":\"two final\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 200, "ok", ""))
+        ]);
+        var transport = new DoubaoAudioTransport(
+            client,
+            encoder,
+            diagnostics,
+            new StepClock(DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000), TimeSpan.FromMilliseconds(1)));
+
+        await transport.StartStreamingAsync(Credentials(), "request-1", contextHint: "", CancellationToken.None);
+        var transcript = await transport.StopStreamingAsync(CancellationToken.None);
+
+        Assert.Equal("first long interimtwo final", transcript);
+        Assert.Contains("doubao.transcript.segment_rescued textLength=18 newTextLength=3", diagnostics.Joined);
+        Assert.Contains("doubao.transcript.segment_final textLength=9 segments=2", diagnostics.Joined);
+        Assert.DoesNotContain("first long interim", diagnostics.Joined);
+        Assert.DoesNotContain("two final", diagnostics.Joined);
+    }
+
+    [Fact]
     public async Task TransportAbortsWithoutAudioFramesWhenStartTaskFails()
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
@@ -342,6 +444,40 @@ public sealed class DoubaoAudioTransportTests
         public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(_responses.Dequeue());
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class WaitingDoubaoTransportClient : IDoubaoTransportClient
+    {
+        private readonly Queue<byte[]> _responses;
+
+        public WaitingDoubaoTransportClient(IEnumerable<byte[]> responses)
+        {
+            _responses = new Queue<byte[]>(responses);
+        }
+
+        public List<byte[]> SentMessages { get; } = [];
+
+        public Task SendAsync(byte[] message, CancellationToken cancellationToken = default)
+        {
+            SentMessages.Add(message);
+            return Task.CompletedTask;
+        }
+
+        public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+        {
+            if (_responses.Count > 0)
+            {
+                return _responses.Dequeue();
+            }
+
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new OperationCanceledException(cancellationToken);
         }
 
         public ValueTask DisposeAsync()

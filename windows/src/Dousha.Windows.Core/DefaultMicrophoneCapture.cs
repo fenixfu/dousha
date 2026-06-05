@@ -11,6 +11,8 @@ public sealed class DefaultMicrophoneCapture : IDictationCapture
         _input = input;
     }
 
+    public event EventHandler<AudioFrame>? FrameCaptured;
+
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         _input.FrameCaptured += OnFrameCaptured;
@@ -35,9 +37,12 @@ public sealed class DefaultMicrophoneCapture : IDictationCapture
 
     private void OnFrameCaptured(object? sender, AudioFrameCapturedEventArgs e)
     {
+        var frame = new AudioFrame(e.Data, e.CapturedAt);
         lock (_framesLock)
         {
-            _frames.Add(new AudioFrame(e.Data, e.CapturedAt));
+            _frames.Add(frame);
         }
+
+        FrameCaptured?.Invoke(this, frame);
     }
 }
