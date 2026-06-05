@@ -5,6 +5,11 @@ Package.resolved
 .DS_Store
 icon.iconset/
 
+# Windows/.NET build and portable publish outputs
+bin/
+obj/
+windows/artifacts/
+
 # Reverse-engineering artifacts (large binaries, decompiled output)
 *.apk
 DoubaoIME-decompiled/
