@@ -8,6 +8,7 @@ public sealed class TrayApplicationLifetime : IDisposable
     private readonly ApplicationExitCoordinator _exitCoordinator;
     private readonly FileDiagnosticLog _diagnosticLog;
     private readonly TrayApplicationContext _context;
+    private readonly StartupShortcutService _startupShortcutService;
     private readonly HttpDoubaoCredentialClient _credentialClient;
     private readonly DoubaoCredentialStore _credentialStore;
     private readonly DictationTriggerCommandRunner _dictationRunner;
@@ -22,7 +23,8 @@ public sealed class TrayApplicationLifetime : IDisposable
         var settings = settingsStore.Load();
         _diagnosticLog.Lifecycle("app.started");
         _diagnosticLog.StatusChanged(DictationStatus.Idle, DictationStatus.Idle);
-        _context = new TrayApplicationContext(_exitCoordinator, settingsStore, paths, _diagnosticLog);
+        _startupShortcutService = new StartupShortcutService(paths, new WindowsStartupShortcutWriter());
+        _context = new TrayApplicationContext(_exitCoordinator, settingsStore, paths, _startupShortcutService, _diagnosticLog);
         _credentialClient = new HttpDoubaoCredentialClient();
         _credentialStore = new DoubaoCredentialStore(paths, _credentialClient, SystemClock.Instance, _diagnosticLog);
         _dictationRunner = new DictationTriggerCommandRunner(CreateSessionController, _diagnosticLog);

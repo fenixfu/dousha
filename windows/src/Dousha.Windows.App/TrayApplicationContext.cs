@@ -10,6 +10,7 @@ public sealed class TrayApplicationContext : ApplicationContext, IDictationStatu
     private readonly ApplicationExitCoordinator _exitCoordinator;
     private readonly UserSettingsStore _settingsStore;
     private readonly WindowsUserDataPaths _paths;
+    private readonly StartupShortcutService _startupShortcutService;
     private readonly FileDiagnosticLog _diagnosticLog;
     private readonly NotifyIcon _notifyIcon;
     private readonly SynchronizationContext? _uiContext;
@@ -20,11 +21,13 @@ public sealed class TrayApplicationContext : ApplicationContext, IDictationStatu
         ApplicationExitCoordinator exitCoordinator,
         UserSettingsStore settingsStore,
         WindowsUserDataPaths paths,
+        StartupShortcutService startupShortcutService,
         FileDiagnosticLog diagnosticLog)
     {
         _exitCoordinator = exitCoordinator;
         _settingsStore = settingsStore;
         _paths = paths;
+        _startupShortcutService = startupShortcutService;
         _diagnosticLog = diagnosticLog;
         _uiContext = SynchronizationContext.Current;
         _exitCoordinator.ExitRequested += OnExitRequested;
@@ -120,7 +123,7 @@ public sealed class TrayApplicationContext : ApplicationContext, IDictationStatu
     {
         if (_settingsWindow is null || _settingsWindow.IsDisposed)
         {
-            _settingsWindow = new SettingsWindow(_settingsStore, _paths);
+            _settingsWindow = new SettingsWindow(_settingsStore, _paths, _startupShortcutService);
         }
 
         _diagnosticLog.Lifecycle("settings.opened");

@@ -7,4 +7,6 @@ public sealed record UserSettings
     public string TriggerGesture { get; init; } = "DoubleTapAndHoldLeftControl";
 
     public TriggerSettings Trigger { get; init; } = TriggerSettings.Default;
+
+    public bool LaunchAtStartup { get; init; }
 }

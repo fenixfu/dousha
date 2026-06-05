@@ -5,9 +5,9 @@ The Windows port is validated as a portable app. Do not report Windows changes a
 ## Required Workflow
 
 1. Quit any running `Dousha.Windows` instance from the tray menu or Task Manager.
-2. Run the Windows unit test suite with `dotnet test`.
-3. Publish a portable build into the agreed artifacts directory.
-4. Start the real `.exe` from that portable build directory.
+2. Run the Windows unit test suite with `dotnet test windows\Dousha.Windows.sln`.
+3. Publish a portable build with `powershell -ExecutionPolicy Bypass -File windows\publish.ps1`.
+4. Start the real portable executable from `windows\artifacts\Dousha.Windows\Dousha.Windows.App.exe`.
 5. Run the manual acceptance checklist below.
 
 ## Manual Acceptance Checklist
@@ -19,8 +19,11 @@ The Windows port is validated as a portable app. Do not report Windows changes a
 - Doubao transcription returns Chinese Mandarin text.
 - The transcript is inserted into the currently focused target through clipboard paste insertion.
 - The tray icon/menu reflects idle, recording, transcribing, success, and error states.
+- Non-blocking error feedback appears for recoverable trigger, audio, Doubao, or insertion failures, with details written to the Local Diagnostic Log.
 - The tray menu can quit the app cleanly.
-- Startup shortcut creation and removal work when enabled in settings.
+- In the Settings Window, enabling `Launch at Windows sign-in` creates a current-user Startup Shortcut to the portable executable.
+- In the Settings Window, disabling `Launch at Windows sign-in` removes that current-user Startup Shortcut.
+- No Windows service, installer, updater, or machine-wide startup registration is created.
 
 ## Scope
 
