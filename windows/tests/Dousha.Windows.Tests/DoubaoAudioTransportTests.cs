@@ -43,6 +43,38 @@ public sealed class DoubaoAudioTransportTests
     }
 
     [Fact]
+    public void PcmRebuffererPadsPartialTailAsLastFrame()
+    {
+        var firstFull = Enumerable.Repeat((byte)1, DoubaoAudioConstants.PcmBytesPerFrame).ToArray();
+        var partial = Enumerable.Repeat((byte)2, 40).ToArray();
+        var audio = new CapturedAudio(
+            DoubaoAudioConstants.Pcm16KhzMono,
+            [new AudioFrame([.. firstFull, .. partial], TimeSpan.Zero)]);
+
+        var frames = DoubaoPcmRebufferer.ToTenMillisecondFramesWithFinal(audio).ToArray();
+
+        Assert.Equal(2, frames.Length);
+        Assert.Equal(FrameState.First, frames[0].FrameState);
+        Assert.Equal(firstFull, frames[0].Pcm);
+        Assert.Equal(FrameState.Last, frames[1].FrameState);
+        Assert.Equal(DoubaoAudioConstants.PcmBytesPerFrame, frames[1].Pcm.Length);
+        Assert.Equal(40, frames[1].Pcm.Count(value => value == 2));
+        Assert.Equal(DoubaoAudioConstants.PcmBytesPerFrame - 40, frames[1].Pcm.Count(value => value == 0));
+    }
+
+    [Fact]
+    public void PcmRebuffererSendsSilentLastFrameAfterCompleteFrames()
+    {
+        var audio = AudioWithFrames(2);
+
+        var frames = DoubaoPcmRebufferer.ToTenMillisecondFramesWithFinal(audio).ToArray();
+
+        Assert.Equal(3, frames.Length);
+        Assert.Equal([FrameState.First, FrameState.Middle, FrameState.Last], frames.Select(frame => frame.FrameState));
+        Assert.All(frames.Last().Pcm, value => Assert.Equal((byte)0, value));
+    }
+
+    [Fact]
     public void ConcentusOpusEncoderProducesOpusPacketsForTenMillisecondDoubaoPcmFrames()
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
@@ -64,6 +96,9 @@ public sealed class DoubaoAudioTransportTests
     public async Task TransportSendsEncodedFramesWithDoubaoFrameStatesAndParsesMandarinResponseWithoutLeakingSensitiveData()
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
+        var clock = new StepClock(
+            DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000),
+            TimeSpan.FromMilliseconds(7));
         var client = new ScriptedDoubaoTransportClient([
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
@@ -75,7 +110,7 @@ public sealed class DoubaoAudioTransportTests
                 "{\"results\":[{\"text\":\"你好，豆沙。\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
         ]);
         var diagnostics = new RecordingDiagnosticLog();
-        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics, clock);
         var pcm = new byte[DoubaoAudioConstants.PcmBytesPerFrame * 3];
         for (var index = 0; index < pcm.Length; index++)
         {
@@ -90,15 +125,53 @@ public sealed class DoubaoAudioTransportTests
             CancellationToken.None);
 
         var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        var taskRequests = sentRequests.Where(request => request.MethodName == "TaskRequest").ToArray();
         Assert.Equal("你好，豆沙。", transcript);
-        Assert.Equal(["StartTask", "StartSession", "TaskRequest", "TaskRequest", "TaskRequest", "FinishSession"], sentRequests.Select(request => request.MethodName));
-        Assert.Equal([FrameState.First, FrameState.Middle, FrameState.Last], sentRequests.Where(request => request.MethodName == "TaskRequest").Select(request => request.FrameState));
-        Assert.All(sentRequests.Where(request => request.MethodName == "TaskRequest"), request => Assert.NotEmpty(request.AudioData.ToArray()));
+        Assert.Equal(["StartTask", "StartSession", "TaskRequest", "TaskRequest", "TaskRequest", "TaskRequest", "FinishSession"], sentRequests.Select(request => request.MethodName));
+        Assert.Equal([FrameState.First, FrameState.Middle, FrameState.Middle, FrameState.Last], taskRequests.Select(request => request.FrameState));
+        Assert.All(taskRequests, request => Assert.NotEmpty(request.AudioData.ToArray()));
+        Assert.Equal([1_800_000_000_000, 1_800_000_000_007, 1_800_000_000_014, 1_800_000_000_021], taskRequests.Select(TimestampMs));
+        Assert.All(taskRequests, request => Assert.Contains("timestamp_ms\":1800000000", request.Payload));
+        Assert.Contains("\"finish_audio\":true", taskRequests.Last().Payload);
         Assert.Contains("doubao.transport.started", diagnostics.Joined);
-        Assert.Contains("doubao.transport.audio_frames_sent count=3", diagnostics.Joined);
+        Assert.Contains("doubao.transport.audio_frames_sent count=4", diagnostics.Joined);
         Assert.Contains("doubao.transport.finished receivedFinal=True", diagnostics.Joined);
         Assert.DoesNotContain("secret-token", diagnostics.Joined);
         Assert.DoesNotContain("你好，豆沙。", diagnostics.Joined);
+    }
+
+    [Fact]
+    public async Task TransportSendsPaddedPartialTailAsOnlyLastFrame()
+    {
+        using var encoder = new CapturingEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+                "request-1",
+                "TaskResponse",
+                200,
+                "ok",
+                "{\"results\":[{\"text\":\"done\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
+        ]);
+        var transport = new DoubaoAudioTransport(
+            client,
+            encoder,
+            new RecordingDiagnosticLog(),
+            new StepClock(DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000), TimeSpan.FromMilliseconds(1)));
+        var audio = new CapturedAudio(
+            DoubaoAudioConstants.Pcm16KhzMono,
+            [new AudioFrame(Enumerable.Repeat((byte)9, 40).ToArray(), TimeSpan.Zero)]);
+
+        await transport.TranscribeAsync(audio, Credentials(), "request-1", contextHint: "", CancellationToken.None);
+
+        var taskRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).Where(request => request.MethodName == "TaskRequest").ToArray();
+        Assert.Single(taskRequests);
+        Assert.Equal(FrameState.Last, taskRequests[0].FrameState);
+        Assert.Contains("\"finish_audio\":true", taskRequests[0].Payload);
+        Assert.Single(encoder.PcmFrames);
+        Assert.Equal(40, encoder.PcmFrames[0].Count(value => value == 9));
+        Assert.Equal(DoubaoAudioConstants.PcmBytesPerFrame - 40, encoder.PcmFrames[0].Count(value => value == 0));
     }
 
     [Fact]
@@ -243,6 +316,12 @@ public sealed class DoubaoAudioTransportTests
         return new DoubaoDeviceCredentials("device-1", "install-1", "cdid-1", "open-1", "client-1", "secret-token");
     }
 
+    private static long TimestampMs(DoubaoAsrRequest request)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(request.Payload);
+        return document.RootElement.GetProperty("timestamp_ms").GetInt64();
+    }
+
     private sealed class ScriptedDoubaoTransportClient : IDoubaoTransportClient
     {
         private readonly Queue<byte[]> _responses;
@@ -268,6 +347,36 @@ public sealed class DoubaoAudioTransportTests
         public ValueTask DisposeAsync()
         {
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class StepClock(DateTimeOffset initial, TimeSpan step) : IClock
+    {
+        private DateTimeOffset _next = initial;
+
+        public DateTimeOffset Now
+        {
+            get
+            {
+                var current = _next;
+                _next = _next.Add(step);
+                return current;
+            }
+        }
+    }
+
+    private sealed class CapturingEncoder : IDoubaoOpusEncoder
+    {
+        public List<byte[]> PcmFrames { get; } = [];
+
+        public byte[] EncodeTenMillisecondFrame(ReadOnlySpan<byte> pcmFrame)
+        {
+            PcmFrames.Add(pcmFrame.ToArray());
+            return [42];
+        }
+
+        public void Dispose()
+        {
         }
     }
 }

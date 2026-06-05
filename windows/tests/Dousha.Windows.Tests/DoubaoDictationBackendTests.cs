@@ -40,7 +40,8 @@ public sealed class DoubaoDictationBackendTests
         Assert.Equal(1, credentialClient.RegisterCalls);
         Assert.Equal(1, credentialClient.TokenCalls);
         Assert.Equal(1, transportFactory.ConnectCalls);
-        Assert.Equal(["StartTask", "StartSession", "TaskRequest", "TaskRequest", "FinishSession"], transportClient.SentMessages.Select(message => DoubaoAsrRequest.Decode(message).MethodName));
+        Assert.Equal("device-1", transportFactory.ConnectedDeviceId);
+        Assert.Equal(["StartTask", "StartSession", "TaskRequest", "TaskRequest", "TaskRequest", "FinishSession"], transportClient.SentMessages.Select(message => DoubaoAsrRequest.Decode(message).MethodName));
         Assert.Contains("doubao.backend.transcribe_started", diagnostics.Joined);
         Assert.Contains("doubao.backend.transcribe_completed textLength=6", diagnostics.Joined);
         Assert.DoesNotContain("token-secret", diagnostics.Joined);
@@ -70,9 +71,12 @@ public sealed class DoubaoDictationBackendTests
     {
         public int ConnectCalls { get; private set; }
 
-        public Task<IDoubaoTransportClient> ConnectAsync(CancellationToken cancellationToken = default)
+        public string ConnectedDeviceId { get; private set; } = "";
+
+        public Task<IDoubaoTransportClient> ConnectAsync(string deviceId, CancellationToken cancellationToken = default)
         {
             ConnectCalls++;
+            ConnectedDeviceId = deviceId;
             return Task.FromResult<IDoubaoTransportClient>(client);
         }
     }

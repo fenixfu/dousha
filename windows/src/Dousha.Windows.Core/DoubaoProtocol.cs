@@ -9,6 +9,7 @@ public static class DoubaoProtocol
     public const int Aid = 401734;
     public const string UserAgent = "com.bytedance.android.doubaoime/100102018 (Linux; U; Android 16; en_US; Pixel 7 Pro; Build/BP2A.250605.031.A2; Cronet/TTNetVersion:94cf429a 2025-11-17 QuicVersion:1f89f732 2025-05-08)";
     public const string WebSocketEndpoint = "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws";
+    public static TimeSpan WebSocketKeepaliveInterval => TimeSpan.FromSeconds(3);
 
     public static DoubaoHttpRequest BuildRegistrationRequest(string cdid, string openudid, string clientudid, long ticket)
     {
@@ -160,6 +161,16 @@ public static class DoubaoProtocol
             }
         };
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false });
+    }
+
+    public static Uri BuildWebSocketUri(string deviceId)
+    {
+        return new Uri(BuildUrl(
+            WebSocketEndpoint,
+            [
+                ("aid", Aid.ToString()),
+                ("device_id", deviceId)
+            ]));
     }
 
     public static RegisteredDoubaoDevice ParseRegistrationResponse(

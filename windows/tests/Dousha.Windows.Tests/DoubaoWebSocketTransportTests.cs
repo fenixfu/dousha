@@ -17,6 +17,34 @@ public sealed class DoubaoWebSocketTransportTests
     }
 
     [Fact]
+    public void WebSocketUriIncludesAidAndDeviceIdAfterCredentialsAreKnown()
+    {
+        var uri = DoubaoProtocol.BuildWebSocketUri("device-1");
+
+        Assert.Equal(
+            "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws?aid=401734&device_id=device-1",
+            uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public void WebSocketUriEscapesDeviceIdQueryValue()
+    {
+        var uri = DoubaoProtocol.BuildWebSocketUri("device with spaces");
+
+        Assert.Equal(
+            "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws?aid=401734&device_id=device%20with%20spaces",
+            uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public void WebSocketKeepaliveIntervalMatchesMacosPingCadence()
+    {
+        using var socket = WebSocketDoubaoTransportClientFactory.CreateConfiguredSocket();
+
+        Assert.Equal(TimeSpan.FromSeconds(3), socket.Options.KeepAliveInterval);
+    }
+
+    [Fact]
     public void CloseDiagnosticIncludesStatusAndReasonLengthWithoutReasonText()
     {
         var diagnostic = WebSocketDoubaoCloseDiagnostic.Format(

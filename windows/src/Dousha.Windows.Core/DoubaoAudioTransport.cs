@@ -6,13 +6,15 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
     private readonly IDoubaoOpusEncoder _encoder;
     private readonly IDiagnosticLog _diagnosticLog;
     private readonly DoubaoAsrResponseParser _responseParser;
+    private readonly IClock _clock;
 
-    public DoubaoAudioTransport(IDoubaoTransportClient client, IDoubaoOpusEncoder encoder, IDiagnosticLog diagnosticLog)
+    public DoubaoAudioTransport(IDoubaoTransportClient client, IDoubaoOpusEncoder encoder, IDiagnosticLog diagnosticLog, IClock? clock = null)
     {
         _client = client;
         _encoder = encoder;
         _diagnosticLog = diagnosticLog;
         _responseParser = new DoubaoAsrResponseParser(diagnosticLog);
+        _clock = clock ?? SystemClock.Instance;
     }
 
     public async Task<string> TranscribeAsync(
@@ -39,13 +41,12 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
             expectedMessageType: "SessionStarted",
             expectedRequestId: requestId);
 
-        var pcmFrames = DoubaoPcmRebufferer.ToTenMillisecondFrames(audio).ToArray();
-        for (var index = 0; index < pcmFrames.Length; index++)
+        var pcmFrames = DoubaoPcmRebufferer.ToTenMillisecondFramesWithFinal(audio).ToArray();
+        foreach (var frame in pcmFrames)
         {
-            var state = FrameStateFor(index, pcmFrames.Length);
-            var packet = _encoder.EncodeTenMillisecondFrame(pcmFrames[index]);
+            var packet = _encoder.EncodeTenMillisecondFrame(frame.Pcm);
             await _client.SendAsync(
-                DoubaoAsrMessageBuilder.RecognitionFrame(requestId, packet, state, index * DoubaoAudioConstants.PcmFrameDurationMs),
+                DoubaoAsrMessageBuilder.RecognitionFrame(requestId, packet, frame.FrameState, _clock.Now.ToUnixTimeMilliseconds()),
                 cancellationToken);
         }
 
@@ -73,20 +74,5 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
     {
         await _client.DisposeAsync();
         _encoder.Dispose();
-    }
-
-    private static FrameState FrameStateFor(int index, int count)
-    {
-        if (count == 1)
-        {
-            return FrameState.Last;
-        }
-
-        if (index == 0)
-        {
-            return FrameState.First;
-        }
-
-        return index == count - 1 ? FrameState.Last : FrameState.Middle;
     }
 }

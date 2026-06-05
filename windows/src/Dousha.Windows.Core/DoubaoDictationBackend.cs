@@ -26,7 +26,7 @@ public sealed class DoubaoDictationBackend : IDictationBackend
     {
         _diagnosticLog.Lifecycle("doubao.backend.transcribe_started");
         var credentials = await _credentialStore.EnsureCredentialsAsync(cancellationToken);
-        var transportClient = await _transportClientFactory.ConnectAsync(cancellationToken);
+        var transportClient = await _transportClientFactory.ConnectAsync(credentials.DeviceId, cancellationToken);
         await using var transport = new DoubaoAudioTransport(transportClient, _encoderFactory(), _diagnosticLog);
         var transcript = await transport.TranscribeAsync(audio, credentials, _requestIdFactory(), contextHint: "", cancellationToken);
         _diagnosticLog.Lifecycle($"doubao.backend.transcribe_completed textLength={transcript.Length}");
