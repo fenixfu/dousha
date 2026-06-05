@@ -5,14 +5,15 @@ using System.Windows.Forms;
 
 namespace Dousha.Windows.App;
 
-public sealed class TrayApplicationContext : ApplicationContext
+public sealed class TrayApplicationContext : ApplicationContext, IDictationStatusSink
 {
     private readonly ApplicationExitCoordinator _exitCoordinator;
     private readonly UserSettingsStore _settingsStore;
     private readonly WindowsUserDataPaths _paths;
     private readonly FileDiagnosticLog _diagnosticLog;
     private readonly NotifyIcon _notifyIcon;
-    private readonly ContextMenuStrip _menu;
+    private readonly SynchronizationContext? _uiContext;
+    private ContextMenuStrip _menu;
     private SettingsWindow? _settingsWindow;
 
     public TrayApplicationContext(
@@ -25,6 +26,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settingsStore = settingsStore;
         _paths = paths;
         _diagnosticLog = diagnosticLog;
+        _uiContext = SynchronizationContext.Current;
         _exitCoordinator.ExitRequested += OnExitRequested;
 
         _menu = BuildMenu(TrayMenuModel.Create(DictationStatus.Idle));
@@ -46,6 +48,29 @@ public sealed class TrayApplicationContext : ApplicationContext
         _exitCoordinator.ExitRequested -= OnExitRequested;
 
         base.ExitThreadCore();
+    }
+
+    public void StatusChanged(DictationStatus status)
+    {
+        RunOnUiThread(() =>
+        {
+            _diagnosticLog.Lifecycle($"tray.status_updated status={status}");
+            _notifyIcon.Text = $"{TrayMenuText.AppName} - {TrayStatusFormatter.Format(status)}";
+            var previousMenu = _menu;
+            _menu = BuildMenu(TrayMenuModel.Create(status));
+            _notifyIcon.ContextMenuStrip = _menu;
+            previousMenu.Dispose();
+        });
+    }
+
+    public void ShowNonBlockingError(NonBlockingErrorFeedback feedback)
+    {
+        RunOnUiThread(() =>
+        {
+            _notifyIcon.BalloonTipTitle = TrayMenuText.AppName;
+            _notifyIcon.BalloonTipText = $"{feedback.Area}: {feedback.EventName}";
+            _notifyIcon.ShowBalloonTip(3000);
+        });
     }
 
     private ContextMenuStrip BuildMenu(TrayMenuModel model)
@@ -112,5 +137,16 @@ public sealed class TrayApplicationContext : ApplicationContext
             FileName = _paths.LogsDirectory,
             UseShellExecute = true
         });
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (_uiContext is null)
+        {
+            action();
+            return;
+        }
+
+        _uiContext.Post(_ => action(), null);
     }
 }

@@ -44,9 +44,21 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         _diagnosticLog.Lifecycle($"doubao.transport.audio_frames_sent count={pcmFrames.Length}");
         await _client.SendAsync(DoubaoAsrMessageBuilder.FinishSession(requestId, credentials.Token), cancellationToken);
 
-        var finalEvent = _responseParser.Parse(await _client.ReceiveAsync(cancellationToken));
-        _diagnosticLog.Lifecycle($"doubao.transport.finished receivedFinal={finalEvent.IsFinalized}");
-        return finalEvent.Text ?? "";
+        string transcript = "";
+        while (true)
+        {
+            var recognitionEvent = _responseParser.Parse(await _client.ReceiveAsync(cancellationToken));
+            if (!string.IsNullOrEmpty(recognitionEvent.Text))
+            {
+                transcript = recognitionEvent.Text;
+            }
+
+            if (recognitionEvent.IsFinalized)
+            {
+                _diagnosticLog.Lifecycle($"doubao.transport.finished receivedFinal=True");
+                return transcript;
+            }
+        }
     }
 
     public async ValueTask DisposeAsync()

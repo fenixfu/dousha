@@ -8,6 +8,7 @@ public static class DoubaoProtocol
 {
     public const int Aid = 401734;
     public const string UserAgent = "com.bytedance.android.doubaoime/100102018 (Linux; U; Android 16; en_US; Pixel 7 Pro)";
+    public const string WebSocketEndpoint = "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws";
 
     public static DoubaoHttpRequest BuildRegistrationRequest(string cdid, string openudid, string clientudid, long ticket)
     {
