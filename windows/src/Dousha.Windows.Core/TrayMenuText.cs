@@ -4,5 +4,7 @@ public static class TrayMenuText
 {
     public const string AppName = "Dousha for Windows";
     public const string StatusPrefix = "Status: ";
+    public const string OpenSettingsCommand = "Settings...";
+    public const string OpenLogsFolderCommand = "Open Logs Folder";
     public const string QuitCommand = "Quit";
 }

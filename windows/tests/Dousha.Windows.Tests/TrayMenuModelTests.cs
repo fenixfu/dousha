@@ -24,11 +24,15 @@ public sealed class TrayMenuModelTests
                 Assert.False(item.Enabled);
                 Assert.Null(item.Command);
             },
-            item =>
-            {
-                Assert.Equal(TrayMenuText.QuitCommand, item.Text);
-                Assert.True(item.Enabled);
-                Assert.Equal(TrayMenuCommand.Quit, item.Command);
-            });
+            item => AssertCommand(item, TrayMenuText.OpenSettingsCommand, TrayMenuCommand.OpenSettings),
+            item => AssertCommand(item, TrayMenuText.OpenLogsFolderCommand, TrayMenuCommand.OpenLogsFolder),
+            item => AssertCommand(item, TrayMenuText.QuitCommand, TrayMenuCommand.Quit));
+    }
+
+    private static void AssertCommand(TrayMenuItemDescriptor item, string text, TrayMenuCommand command)
+    {
+        Assert.Equal(text, item.Text);
+        Assert.True(item.Enabled);
+        Assert.Equal(command, item.Command);
     }
 }
