@@ -1,8 +1,15 @@
 using Dousha.Windows.App;
 using System.Windows.Forms;
 
-Application.EnableVisualStyles();
-Application.SetCompatibleTextRenderingDefault(false);
+internal static class Program
+{
+    [STAThread]
+    private static void Main()
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
 
-using var lifetime = new TrayApplicationLifetime();
-Application.Run(lifetime.Context);
+        using var lifetime = new TrayApplicationLifetime();
+        Application.Run(lifetime.Context);
+    }
+}
