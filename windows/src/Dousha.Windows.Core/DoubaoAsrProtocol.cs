@@ -143,12 +143,18 @@ public sealed record DoubaoRecognitionEvent(
 public sealed class DoubaoProtocolException : Exception
 {
     public DoubaoProtocolException(string messageType, int statusCode, int statusMessageLength, string phase)
-        : base($"Doubao protocol failure phase={phase} messageType={messageType} statusCode={statusCode} statusMessageLength={statusMessageLength}")
+        : this(messageType, statusCode, statusMessageLength, phase, "terminal")
+    {
+    }
+
+    public DoubaoProtocolException(string messageType, int statusCode, int statusMessageLength, string phase, string reason)
+        : base($"Doubao protocol failure phase={phase} messageType={messageType} statusCode={statusCode} statusMessageLength={statusMessageLength} reason={reason}")
     {
         MessageType = messageType;
         StatusCode = statusCode;
         StatusMessageLength = statusMessageLength;
         Phase = phase;
+        Reason = reason;
     }
 
     public string MessageType { get; }
@@ -158,6 +164,8 @@ public sealed class DoubaoProtocolException : Exception
     public int StatusMessageLength { get; }
 
     public string Phase { get; }
+
+    public string Reason { get; }
 }
 
 public sealed class DoubaoAsrResponseParser
@@ -173,12 +181,7 @@ public sealed class DoubaoAsrResponseParser
     {
         var response = DoubaoAsrResponse.Decode(data);
         _diagnosticLog.Lifecycle($"doubao.protocol.response messageType={response.MessageType} statusCode={response.StatusCode} resultJsonLength={response.ResultJson.Length}");
-        if (response.StatusCode != 200 || response.MessageType.EndsWith("Failed", StringComparison.OrdinalIgnoreCase))
-        {
-            var statusMessageLength = response.StatusMessage.Length;
-            _diagnosticLog.Lifecycle($"doubao.protocol.failure messageType={response.MessageType} statusCode={response.StatusCode} statusMessageLength={statusMessageLength} phase={phase}");
-            throw new DoubaoProtocolException(response.MessageType, response.StatusCode, statusMessageLength, phase);
-        }
+        ThrowIfTerminalFailure(response, phase);
 
         if (string.IsNullOrWhiteSpace(response.ResultJson))
         {
@@ -239,5 +242,43 @@ public sealed class DoubaoAsrResponseParser
             vadFinished,
             (!isInterim && vadFinished) || nonstreamResult,
             text is null);
+    }
+
+    public DoubaoRecognitionEvent ParseControl(
+        ReadOnlyMemory<byte> data,
+        string phase,
+        string expectedMessageType,
+        string expectedRequestId)
+    {
+        var response = DoubaoAsrResponse.Decode(data);
+        _diagnosticLog.Lifecycle($"doubao.protocol.response messageType={response.MessageType} statusCode={response.StatusCode} resultJsonLength={response.ResultJson.Length}");
+        ThrowIfTerminalFailure(response, phase);
+        if (!string.Equals(response.MessageType, expectedMessageType, StringComparison.Ordinal))
+        {
+            ThrowControlFailure(response, phase, "unexpected_message_type");
+        }
+
+        if (!string.IsNullOrEmpty(response.RequestId)
+            && !string.Equals(response.RequestId, expectedRequestId, StringComparison.Ordinal))
+        {
+            ThrowControlFailure(response, phase, "request_id_mismatch");
+        }
+
+        return new DoubaoRecognitionEvent(response.MessageType, response.StatusCode, null, true, false, false, false);
+    }
+
+    private void ThrowIfTerminalFailure(DoubaoAsrResponse response, string phase)
+    {
+        if (response.StatusCode != 200 || response.MessageType.EndsWith("Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            ThrowControlFailure(response, phase, "terminal");
+        }
+    }
+
+    private void ThrowControlFailure(DoubaoAsrResponse response, string phase, string reason)
+    {
+        var statusMessageLength = response.StatusMessage.Length;
+        _diagnosticLog.Lifecycle($"doubao.protocol.failure messageType={response.MessageType} statusCode={response.StatusCode} statusMessageLength={statusMessageLength} phase={phase} reason={reason}");
+        throw new DoubaoProtocolException(response.MessageType, response.StatusCode, statusMessageLength, phase, reason);
     }
 }

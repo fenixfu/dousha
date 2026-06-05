@@ -14,8 +14,8 @@ public sealed class DoubaoDictationBackendTests
         var credentialClient = new FakeCredentialClient();
         var credentialStore = new DoubaoCredentialStore(paths, credentialClient, new FixedClock(), diagnostics);
         var transportClient = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("ignored", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("ignored", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "SessionStarted", 200, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "ignored",
                 "TaskResponse",

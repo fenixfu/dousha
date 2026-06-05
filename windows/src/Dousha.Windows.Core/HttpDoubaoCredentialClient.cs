@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Dousha.Windows.Core;
@@ -21,9 +22,9 @@ public sealed class HttpDoubaoCredentialClient : IDoubaoCredentialClient, IDispo
 
     public async Task<RegisteredDoubaoDevice> RegisterDeviceAsync(CancellationToken cancellationToken = default)
     {
-        var cdid = Guid.NewGuid().ToString();
-        var openudid = Guid.NewGuid().ToString("N");
-        var clientudid = Guid.NewGuid().ToString("N");
+        var cdid = Guid.NewGuid().ToString().ToLowerInvariant();
+        var openudid = RandomHex(bytes: 8);
+        var clientudid = Guid.NewGuid().ToString().ToLowerInvariant();
         var request = DoubaoProtocol.BuildRegistrationRequest(cdid, openudid, clientudid, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var response = await SendAsync(request, cancellationToken);
         return DoubaoProtocol.ParseRegistrationResponse(response, cdid, openudid, clientudid);
@@ -67,5 +68,10 @@ public sealed class HttpDoubaoCredentialClient : IDoubaoCredentialClient, IDispo
         using var response = await _httpClient.SendAsync(message, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static string RandomHex(int bytes)
+    {
+        return Convert.ToHexString(RandomNumberGenerator.GetBytes(bytes)).ToLowerInvariant();
     }
 }

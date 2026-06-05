@@ -125,6 +125,56 @@ public sealed class DoubaoAudioTransportTests
     }
 
     [Fact]
+    public async Task TransportAbortsWithoutAudioFramesWhenStartTaskReceivesWrongSuccessControlMessage()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var exception = await Assert.ThrowsAsync<DoubaoProtocolException>(() => transport.TranscribeAsync(
+            AudioWithFrames(3),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None));
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("StartTask", exception.Phase);
+        Assert.Equal("SessionStarted", exception.MessageType);
+        Assert.Equal(["StartTask"], sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("TaskRequest", sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
+    }
+
+    [Fact]
+    public async Task TransportAbortsWithoutAudioFramesWhenStartTaskResponseUsesWrongRequestId()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("other-request", "TaskStarted", 200, "ok", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var exception = await Assert.ThrowsAsync<DoubaoProtocolException>(() => transport.TranscribeAsync(
+            AudioWithFrames(3),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None));
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("StartTask", exception.Phase);
+        Assert.Equal("TaskStarted", exception.MessageType);
+        Assert.Equal(["StartTask"], sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("other-request", exception.Message);
+        Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
+    }
+
+    [Fact]
     public async Task TransportAbortsWithoutAudioFramesWhenStartSessionFails()
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
@@ -149,6 +199,32 @@ public sealed class DoubaoAudioTransportTests
         Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
         Assert.Contains("statusMessageLength=11", diagnostics.Joined);
         Assert.DoesNotContain("bad request", diagnostics.Joined);
+    }
+
+    [Fact]
+    public async Task TransportAbortsWithoutAudioFramesWhenStartSessionReceivesWrongSuccessControlMessage()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var exception = await Assert.ThrowsAsync<DoubaoProtocolException>(() => transport.TranscribeAsync(
+            AudioWithFrames(3),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None));
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("StartSession", exception.Phase);
+        Assert.Equal("TaskStarted", exception.MessageType);
+        Assert.Equal(["StartTask", "StartSession"], sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("TaskRequest", sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
     }
 
     private static CapturedAudio AudioWithFrames(int frameCount)

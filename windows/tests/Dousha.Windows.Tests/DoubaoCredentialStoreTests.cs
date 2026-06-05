@@ -1,4 +1,5 @@
 using Dousha.Windows.Core;
+using System.Text.Json;
 using Xunit;
 
 namespace Dousha.Windows.Tests;
@@ -130,6 +131,27 @@ public sealed class DoubaoCredentialStoreTests
         Assert.False(DoubaoJwtExpiry.IsExpired("not.a.jwt", Now));
     }
 
+    [Fact]
+    public async Task HttpCredentialClientGeneratesMacosParityAnonymousDeviceIdentifiers()
+    {
+        var handler = new CapturingHandler("""
+            {"device_id_str":"device-1","install_id_str":"install-1"}
+            """);
+        using var httpClient = new HttpClient(handler);
+        using var client = new HttpDoubaoCredentialClient(httpClient);
+
+        var device = await client.RegisterDeviceAsync();
+
+        using var body = JsonDocument.Parse(handler.RequestBody);
+        var header = body.RootElement.GetProperty("header");
+        var openudid = header.GetProperty("openudid").GetString() ?? "";
+        var clientudid = header.GetProperty("clientudid").GetString() ?? "";
+        Assert.Equal(device.Openudid, openudid);
+        Assert.Equal(device.Clientudid, clientudid);
+        Assert.Matches("^[0-9a-f]{16}$", openudid);
+        Assert.Matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", clientudid);
+    }
+
     private sealed class FakeDoubaoCredentialClient : IDoubaoCredentialClient
     {
         public int RegisterCalls { get; private set; }
@@ -162,5 +184,21 @@ public sealed class DoubaoCredentialStoreTests
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset Now => now;
+    }
+
+    private sealed class CapturingHandler(string responseBody) : HttpMessageHandler
+    {
+        public string RequestBody { get; private set; } = "";
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestBody = request.Content is null
+                ? ""
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseBody)
+            };
+        }
     }
 }

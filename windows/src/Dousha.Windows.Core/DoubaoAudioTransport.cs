@@ -25,11 +25,19 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         _diagnosticLog.Lifecycle("doubao.transport.started");
 
         await _client.SendAsync(DoubaoAsrMessageBuilder.StartTask(requestId, credentials.Token), cancellationToken);
-        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken), "StartTask");
+        _responseParser.ParseControl(
+            await _client.ReceiveAsync(cancellationToken),
+            "StartTask",
+            expectedMessageType: "TaskStarted",
+            expectedRequestId: requestId);
 
         var sessionConfig = DoubaoProtocol.BuildSessionConfigJson(credentials.DeviceId, contextHint);
         await _client.SendAsync(DoubaoAsrMessageBuilder.StartSession(requestId, credentials.Token, sessionConfig), cancellationToken);
-        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken), "StartSession");
+        _responseParser.ParseControl(
+            await _client.ReceiveAsync(cancellationToken),
+            "StartSession",
+            expectedMessageType: "SessionStarted",
+            expectedRequestId: requestId);
 
         var pcmFrames = DoubaoPcmRebufferer.ToTenMillisecondFrames(audio).ToArray();
         for (var index = 0; index < pcmFrames.Length; index++)
