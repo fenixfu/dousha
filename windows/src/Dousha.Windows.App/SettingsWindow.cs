@@ -40,8 +40,15 @@ public sealed class SettingsWindow : Form
         {
             AutoEllipsis = true,
             Location = new Point(16, 82),
-            Size = new Size(380, 32),
+            Size = new Size(380, 24),
             Text = $"Settings file: {paths.SettingsFilePath}"
+        };
+
+        var timingLabel = new Label
+        {
+            AutoSize = true,
+            Location = new Point(16, 108),
+            Text = $"Double-tap window: {settings.Trigger.DoubleTapWindowMilliseconds} ms"
         };
 
         var closeButton = new Button
@@ -53,12 +60,12 @@ public sealed class SettingsWindow : Form
         };
 
         AcceptButton = closeButton;
-        Controls.AddRange([triggerLabel, _triggerGestureTextBox, locationLabel, closeButton]);
+        Controls.AddRange([triggerLabel, _triggerGestureTextBox, locationLabel, timingLabel, closeButton]);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _settingsStore.Save(new UserSettings(_triggerGestureTextBox.Text));
+        _settingsStore.Save(_settingsStore.Load() with { TriggerGesture = _triggerGestureTextBox.Text });
         base.OnFormClosing(e);
     }
 }
