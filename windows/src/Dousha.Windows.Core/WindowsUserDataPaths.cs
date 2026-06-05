@@ -8,8 +8,10 @@ public sealed class WindowsUserDataPaths
         UserDataRoot = Path.GetFullPath(userDataRoot);
         SettingsDirectory = Path.Combine(UserDataRoot, "settings");
         LogsDirectory = Path.Combine(UserDataRoot, "logs");
+        DoubaoCredentialsDirectory = Path.Combine(UserDataRoot, "credentials");
         SettingsFilePath = Path.Combine(SettingsDirectory, "settings.json");
         CurrentLogFilePath = Path.Combine(LogsDirectory, "diagnostic.log");
+        DoubaoCredentialsFilePath = Path.Combine(DoubaoCredentialsDirectory, "doubao-credentials.json");
     }
 
     public string ExecutableDirectory { get; }
@@ -23,6 +25,10 @@ public sealed class WindowsUserDataPaths
     public string LogsDirectory { get; }
 
     public string CurrentLogFilePath { get; }
+
+    public string DoubaoCredentialsDirectory { get; }
+
+    public string DoubaoCredentialsFilePath { get; }
 
     public static WindowsUserDataPaths CreateDefault()
     {
