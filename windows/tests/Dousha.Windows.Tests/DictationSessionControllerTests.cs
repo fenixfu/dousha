@@ -105,6 +105,40 @@ public sealed class DictationSessionControllerTests
         Assert.True(insertion.Disposed);
     }
 
+    [Fact]
+    public async Task CaptureStopErrorSurfacesAudioFeedbackLogsAndCleansUp()
+    {
+        var capture = new FakeCapture { StopError = new InvalidOperationException("device disconnected") };
+        var backend = new FakeBackend("ignored");
+        var insertion = new FakeInsertion();
+        var statusSink = new FakeStatusSink();
+        var logger = new FakeDiagnosticLog();
+        var errors = new List<NonBlockingErrorFeedback>();
+        var controller = new DictationSessionController(
+            new FakeCaptureFactory(capture),
+            backend,
+            insertion,
+            statusSink,
+            logger,
+            new FixedClock());
+        controller.NonBlockingError += errors.Add;
+
+        await controller.StartRecordingAsync();
+        await controller.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Error, controller.CurrentStatus);
+        Assert.Equal([DictationStatus.Recording, DictationStatus.Error], statusSink.Statuses);
+        Assert.Single(errors);
+        Assert.Equal(DiagnosticArea.Audio, errors[0].Area);
+        Assert.Equal("capture_failed", errors[0].EventName);
+        Assert.Contains((DiagnosticArea.Audio, "capture_failed", "InvalidOperationException"), logger.Errors);
+        Assert.Null(backend.Audio);
+        Assert.Null(insertion.InsertedText);
+        Assert.True(capture.Disposed);
+        Assert.True(backend.Disposed);
+        Assert.True(insertion.Disposed);
+    }
+
 
     [Fact]
     public async Task InsertionErrorSurfacesInsertionFeedbackLogsAndCleansUp()
@@ -178,11 +212,15 @@ public sealed class DictationSessionControllerTests
 
     private sealed class FakeCapture : IDictationCapture
     {
-        public CapturedAudio Audio { get; } = new(12);
+        public CapturedAudio Audio { get; } = new(
+            new AudioCaptureFormat(16000, 16, 1),
+            [new AudioFrame([1, 2, 3, 4], TimeSpan.Zero), new AudioFrame([5, 6, 7, 8, 9, 10, 11, 12], TimeSpan.FromMilliseconds(20))]);
 
         public bool Started { get; private set; }
 
         public Exception? StartError { get; init; }
+
+        public Exception? StopError { get; init; }
 
         public bool Stopped { get; private set; }
 
@@ -199,7 +237,9 @@ public sealed class DictationSessionControllerTests
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
         {
             Stopped = true;
-            return Task.FromResult(Audio);
+            return StopError is null
+                ? Task.FromResult(Audio)
+                : Task.FromException<CapturedAudio>(StopError);
         }
 
         public ValueTask DisposeAsync()
