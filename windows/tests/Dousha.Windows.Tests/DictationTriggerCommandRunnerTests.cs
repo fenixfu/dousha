@@ -31,6 +31,8 @@ public sealed class DictationTriggerCommandRunnerTests
         Assert.Equal(capture.Audio, backend.Audio);
         Assert.Equal("你好，豆沙。", insertion.InsertedText);
         Assert.Equal([DictationStatus.Recording, DictationStatus.Transcribing, DictationStatus.Inserting, DictationStatus.Success], statusSink.Statuses);
+        Assert.Contains("trigger.command_received command=StartDictation", diagnostics.Joined);
+        Assert.Contains("trigger.command_received command=StopDictation", diagnostics.Joined);
         Assert.Contains("trigger.start_dictation", diagnostics.Joined);
         Assert.Contains("trigger.stop_dictation", diagnostics.Joined);
     }

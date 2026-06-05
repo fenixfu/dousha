@@ -25,11 +25,11 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         _diagnosticLog.Lifecycle("doubao.transport.started");
 
         await _client.SendAsync(DoubaoAsrMessageBuilder.StartTask(requestId, credentials.Token), cancellationToken);
-        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken));
+        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken), "StartTask");
 
         var sessionConfig = DoubaoProtocol.BuildSessionConfigJson(credentials.DeviceId, contextHint);
         await _client.SendAsync(DoubaoAsrMessageBuilder.StartSession(requestId, credentials.Token, sessionConfig), cancellationToken);
-        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken));
+        _responseParser.Parse(await _client.ReceiveAsync(cancellationToken), "StartSession");
 
         var pcmFrames = DoubaoPcmRebufferer.ToTenMillisecondFrames(audio).ToArray();
         for (var index = 0; index < pcmFrames.Length; index++)
@@ -47,7 +47,7 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         string transcript = "";
         while (true)
         {
-            var recognitionEvent = _responseParser.Parse(await _client.ReceiveAsync(cancellationToken));
+            var recognitionEvent = _responseParser.Parse(await _client.ReceiveAsync(cancellationToken), "FinishSession");
             if (!string.IsNullOrEmpty(recognitionEvent.Text))
             {
                 transcript = recognitionEvent.Text;

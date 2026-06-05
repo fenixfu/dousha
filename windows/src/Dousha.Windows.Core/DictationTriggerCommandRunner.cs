@@ -17,6 +17,7 @@ public sealed class DictationTriggerCommandRunner
 
     public async Task HandleAsync(TriggerCommand command, CancellationToken cancellationToken = default)
     {
+        _diagnosticLog.Lifecycle($"trigger.command_received command={command}");
         await _gate.WaitAsync(cancellationToken);
         try
         {

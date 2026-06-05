@@ -101,6 +101,72 @@ public sealed class DoubaoAudioTransportTests
         Assert.DoesNotContain("你好，豆沙。", diagnostics.Joined);
     }
 
+    [Fact]
+    public async Task TransportAbortsWithoutAudioFramesWhenStartTaskFails()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFailed", 40000000, "", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var exception = await Assert.ThrowsAsync<DoubaoProtocolException>(() => transport.TranscribeAsync(
+            AudioWithFrames(3),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None));
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("StartTask", exception.Phase);
+        Assert.Equal(["StartTask"], sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
+    }
+
+    [Fact]
+    public async Task TransportAbortsWithoutAudioFramesWhenStartSessionFails()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFailed", 40000000, "bad request", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var exception = await Assert.ThrowsAsync<DoubaoProtocolException>(() => transport.TranscribeAsync(
+            AudioWithFrames(3),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None));
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("StartSession", exception.Phase);
+        Assert.Equal(["StartTask", "StartSession"], sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("TaskRequest", sentRequests.Select(request => request.MethodName));
+        Assert.DoesNotContain("doubao.transport.audio_frames_sent", diagnostics.Joined);
+        Assert.Contains("statusMessageLength=11", diagnostics.Joined);
+        Assert.DoesNotContain("bad request", diagnostics.Joined);
+    }
+
+    private static CapturedAudio AudioWithFrames(int frameCount)
+    {
+        var pcm = new byte[DoubaoAudioConstants.PcmBytesPerFrame * frameCount];
+        for (var index = 0; index < pcm.Length; index++)
+        {
+            pcm[index] = (byte)(index % 127);
+        }
+
+        return new CapturedAudio(DoubaoAudioConstants.Pcm16KhzMono, [new AudioFrame(pcm, TimeSpan.Zero)]);
+    }
+
+    private static DoubaoDeviceCredentials Credentials()
+    {
+        return new DoubaoDeviceCredentials("device-1", "install-1", "cdid-1", "open-1", "client-1", "secret-token");
+    }
+
     private sealed class ScriptedDoubaoTransportClient : IDoubaoTransportClient
     {
         private readonly Queue<byte[]> _responses;

@@ -75,6 +75,43 @@ public sealed class DictationSessionControllerTests
     }
 
     [Fact]
+    public async Task DoubaoProtocolFailureSurfacesErrorStatusAndCleansUp()
+    {
+        var capture = new FakeCapture();
+        var backend = new FakeBackend("ignored")
+        {
+            Error = new DoubaoProtocolException("SessionFailed", 40000000, 0, "StartTask")
+        };
+        var insertion = new FakeInsertion();
+        var statusSink = new FakeStatusSink();
+        var logger = new FakeDiagnosticLog();
+        var errors = new List<NonBlockingErrorFeedback>();
+        var controller = new DictationSessionController(
+            new FakeCaptureFactory(capture),
+            backend,
+            insertion,
+            statusSink,
+            logger,
+            new FixedClock());
+        controller.NonBlockingError += errors.Add;
+
+        await controller.StartRecordingAsync();
+        await controller.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Error, controller.CurrentStatus);
+        Assert.Equal([DictationStatus.Recording, DictationStatus.Transcribing, DictationStatus.Error], statusSink.Statuses);
+        Assert.Single(errors);
+        Assert.Equal(DiagnosticArea.Doubao, errors[0].Area);
+        Assert.Equal("transcription_failed", errors[0].EventName);
+        Assert.Contains((DiagnosticArea.Doubao, "transcription_failed", "DoubaoProtocolException"), logger.Errors);
+        Assert.Contains("session.cleaned_up", logger.LifecycleEvents);
+        Assert.True(capture.Disposed);
+        Assert.True(backend.Disposed);
+        Assert.True(insertion.Disposed);
+        Assert.Null(insertion.InsertedText);
+    }
+
+    [Fact]
     public async Task CaptureStartErrorSurfacesAudioFeedbackLogsAndCleansUp()
     {
         var capture = new FakeCapture { StartError = new InvalidOperationException("device unavailable") };

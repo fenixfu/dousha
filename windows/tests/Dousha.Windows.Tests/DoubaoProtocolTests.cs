@@ -153,4 +153,46 @@ public sealed class DoubaoProtocolTests
         Assert.Equal("非流式结果", parsed.Text);
         Assert.True(parsed.IsFinalized);
     }
+
+    [Fact]
+    public void ResponseParserTreatsFailedEmptySessionResponseAsTerminalProtocolFailure()
+    {
+        var logger = new RecordingDiagnosticLog();
+        var parser = new DoubaoAsrResponseParser(logger);
+        var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+            RequestId: "request-1",
+            MessageType: "SessionFailed",
+            StatusCode: 40000000,
+            StatusMessage: "",
+            ResultJson: ""));
+
+        var exception = Assert.Throws<DoubaoProtocolException>(() => parser.Parse(response, "StartTask"));
+
+        Assert.Equal("SessionFailed", exception.MessageType);
+        Assert.Equal(40000000, exception.StatusCode);
+        Assert.Equal(0, exception.StatusMessageLength);
+        Assert.Equal("StartTask", exception.Phase);
+        Assert.Contains("doubao.protocol.failure messageType=SessionFailed statusCode=40000000 statusMessageLength=0 phase=StartTask", logger.Joined);
+        Assert.DoesNotContain("request-1", exception.Message);
+    }
+
+    [Fact]
+    public void ResponseParserTreatsNonSuccessStatusAsTerminalProtocolFailure()
+    {
+        var parser = new DoubaoAsrResponseParser(new RecordingDiagnosticLog());
+        var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+            RequestId: "request-1",
+            MessageType: "TaskStarted",
+            StatusCode: 500,
+            StatusMessage: "server detail",
+            ResultJson: ""));
+
+        var exception = Assert.Throws<DoubaoProtocolException>(() => parser.Parse(response, "StartTask"));
+
+        Assert.Equal("TaskStarted", exception.MessageType);
+        Assert.Equal(500, exception.StatusCode);
+        Assert.Equal(13, exception.StatusMessageLength);
+        Assert.Equal("StartTask", exception.Phase);
+        Assert.DoesNotContain("server detail", exception.Message);
+    }
 }

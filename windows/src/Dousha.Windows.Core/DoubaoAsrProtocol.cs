@@ -140,6 +140,26 @@ public sealed record DoubaoRecognitionEvent(
     bool IsFinalized,
     bool IsHeartbeat);
 
+public sealed class DoubaoProtocolException : Exception
+{
+    public DoubaoProtocolException(string messageType, int statusCode, int statusMessageLength, string phase)
+        : base($"Doubao protocol failure phase={phase} messageType={messageType} statusCode={statusCode} statusMessageLength={statusMessageLength}")
+    {
+        MessageType = messageType;
+        StatusCode = statusCode;
+        StatusMessageLength = statusMessageLength;
+        Phase = phase;
+    }
+
+    public string MessageType { get; }
+
+    public int StatusCode { get; }
+
+    public int StatusMessageLength { get; }
+
+    public string Phase { get; }
+}
+
 public sealed class DoubaoAsrResponseParser
 {
     private readonly IDiagnosticLog _diagnosticLog;
@@ -149,10 +169,17 @@ public sealed class DoubaoAsrResponseParser
         _diagnosticLog = diagnosticLog;
     }
 
-    public DoubaoRecognitionEvent Parse(ReadOnlyMemory<byte> data)
+    public DoubaoRecognitionEvent Parse(ReadOnlyMemory<byte> data, string phase = "unknown")
     {
         var response = DoubaoAsrResponse.Decode(data);
         _diagnosticLog.Lifecycle($"doubao.protocol.response messageType={response.MessageType} statusCode={response.StatusCode} resultJsonLength={response.ResultJson.Length}");
+        if (response.StatusCode != 200 || response.MessageType.EndsWith("Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            var statusMessageLength = response.StatusMessage.Length;
+            _diagnosticLog.Lifecycle($"doubao.protocol.failure messageType={response.MessageType} statusCode={response.StatusCode} statusMessageLength={statusMessageLength} phase={phase}");
+            throw new DoubaoProtocolException(response.MessageType, response.StatusCode, statusMessageLength, phase);
+        }
+
         if (string.IsNullOrWhiteSpace(response.ResultJson))
         {
             return new DoubaoRecognitionEvent(response.MessageType, response.StatusCode, null, true, false, false, false);
