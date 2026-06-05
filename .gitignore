@@ -16,5 +16,5 @@ BorderBeam/
 Makefile.local
 
 # Internal docs (reverse-engineering notes, manual test logs) — not for public repo
-docs/
-.playwright-mcp/
+#docs/
+#.playwright-mcp/

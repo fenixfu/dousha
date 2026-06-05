@@ -13,6 +13,10 @@ Every time you want the user to test a change, you must:
 
 Do **not** report a feature as "ready to test" after only `swift build` or `swift test`. Unit tests are fine for logic, but anything touching audio capture, hotkeys, HUD, or permissions must go through `make install` + relaunch before the user can verify it.
 
+## Windows testing workflow
+
+The Windows port uses a separate workflow because it is delivered as a portable app rather than a signed macOS bundle. See `windows/docs/testing.md`.
+
 ## Release workflow
 
 Public releases go to GitHub Releases as a signed + notarized DMG. The pipeline is fully wired in the `Makefile`:

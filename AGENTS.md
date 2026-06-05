@@ -36,4 +36,4 @@ This repository uses the default triage label vocabulary. See `docs/agents/triag
 
 ### Domain docs
 
-This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
+This repository uses a multi-context domain-doc layout for the macOS original and Windows port. See `docs/agents/domain.md`.
