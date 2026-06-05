@@ -1,6 +1,6 @@
 namespace Dousha.Windows.Core;
 
-public sealed class FileDiagnosticLog
+public sealed class FileDiagnosticLog : IDiagnosticLog
 {
     private readonly WindowsUserDataPaths _paths;
     private readonly IClock _clock;

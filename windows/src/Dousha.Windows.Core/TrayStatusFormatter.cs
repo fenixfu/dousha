@@ -9,6 +9,7 @@ public static class TrayStatusFormatter
             DictationStatus.Idle => "Idle",
             DictationStatus.Recording => "Recording",
             DictationStatus.Transcribing => "Transcribing",
+            DictationStatus.Inserting => "Inserting",
             DictationStatus.Success => "Success",
             DictationStatus.Error => "Error",
             _ => status.ToString()
