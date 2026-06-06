@@ -22,7 +22,13 @@ public sealed class DoubaoCredentialStore
     public async Task<DoubaoDeviceCredentials> EnsureCredentialsAsync(CancellationToken cancellationToken = default)
     {
         var cached = await LoadCachedCredentialsAsync(cancellationToken);
-        if (cached is not null && !string.IsNullOrWhiteSpace(cached.DeviceId))
+        if (cached is not null && !IsCompatibleCacheProfile(cached))
+        {
+            _diagnosticLog.Lifecycle("doubao.credentials.cache_incompatible");
+            cached = null;
+        }
+
+        if (cached is not null)
         {
             if (!string.IsNullOrWhiteSpace(cached.Token) && !DoubaoJwtExpiry.IsExpired(cached.Token, _clock.Now))
             {
@@ -63,6 +69,28 @@ public sealed class DoubaoCredentialStore
         await _cache.SaveAsync(credentials, cancellationToken);
         _diagnosticLog.Lifecycle("doubao.credentials.saved");
         return credentials;
+    }
+
+    private static bool IsCompatibleCacheProfile(DoubaoDeviceCredentials credentials)
+    {
+        return !string.IsNullOrWhiteSpace(credentials.DeviceId)
+            && !string.IsNullOrWhiteSpace(credentials.InstallId)
+            && !string.IsNullOrWhiteSpace(credentials.Cdid)
+            && IsLowercaseHex(credentials.Openudid, 16)
+            && IsCanonicalLowercaseUuid(credentials.Clientudid);
+    }
+
+    private static bool IsLowercaseHex(string value, int length)
+    {
+        return value is not null
+            && value.Length == length
+            && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    }
+
+    private static bool IsCanonicalLowercaseUuid(string value)
+    {
+        return Guid.TryParseExact(value, "D", out var parsed)
+            && string.Equals(value, parsed.ToString("D"), StringComparison.Ordinal);
     }
 
     private async Task<DoubaoDeviceCredentials?> LoadCachedCredentialsAsync(CancellationToken cancellationToken)

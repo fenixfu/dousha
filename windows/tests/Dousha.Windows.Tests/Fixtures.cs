@@ -12,8 +12,8 @@ internal static class Fixtures
             DeviceId: "device-cached",
             InstallId: "install-cached",
             Cdid: "cdid-cached",
-            Openudid: "open-cached",
-            Clientudid: "client-cached",
+            Openudid: "0011223344556677",
+            Clientudid: "11111111-2222-3333-4444-555555555555",
             Token: token ?? JwtExpiringAt(DateTimeOffset.UtcNow.AddHours(2)));
     }
 

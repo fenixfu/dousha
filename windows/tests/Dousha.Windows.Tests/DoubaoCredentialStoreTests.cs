@@ -48,6 +48,80 @@ public sealed class DoubaoCredentialStoreTests
     }
 
     [Fact]
+    public async Task PreParityIdentityCacheRegistersAndPersistsCanonicalReplacement()
+    {
+        using var workspace = TestWorkspace.Create();
+        var paths = WindowsUserDataPaths.Create(workspace.ExecutableDirectory, workspace.UserDataRoot);
+        var stale = Fixtures.Credentials(token: Fixtures.JwtExpiringAt(Now.AddHours(2))) with
+        {
+            Openudid = "00112233445566778899aabbccddeeff",
+            Clientudid = "11111111222233334444555555555555"
+        };
+        await new PlainDoubaoCredentialCache(paths).SaveAsync(stale);
+        var client = new FakeDoubaoCredentialClient();
+        var logger = new RecordingDiagnosticLog();
+        var store = new DoubaoCredentialStore(paths, client, new FixedClock(Now), logger);
+
+        var credentials = await store.EnsureCredentialsAsync();
+
+        Assert.Equal("0011223344556677", credentials.Openudid);
+        Assert.Equal("11111111-2222-3333-4444-555555555555", credentials.Clientudid);
+        Assert.Equal(1, client.RegisterCalls);
+        Assert.Equal(1, client.TokenCalls);
+        Assert.Contains("doubao.credentials.cache_incompatible", logger.LifecycleEvents);
+        Assert.DoesNotContain(stale.Openudid, logger.Joined, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(stale.Clientudid, logger.Joined, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(stale.Token, logger.Joined, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(credentials, await new PlainDoubaoCredentialCache(paths).LoadAsync());
+    }
+
+    [Theory]
+    [InlineData("device_id", "")]
+    [InlineData("install_id", "")]
+    [InlineData("cdid", "")]
+    [InlineData("openudid", "001122334455667")]
+    [InlineData("openudid", "001122334455667A")]
+    [InlineData("clientudid", "11111111222233334444555555555555")]
+    [InlineData("clientudid", "11111111-2222-3333-4444-55555555555A")]
+    public async Task IncompatibleCacheProfileRegistersWithoutLoggingCachedValues(string field, string value)
+    {
+        using var workspace = TestWorkspace.Create();
+        var paths = WindowsUserDataPaths.Create(workspace.ExecutableDirectory, workspace.UserDataRoot);
+        var cached = Fixtures.Credentials(token: Fixtures.JwtExpiringAt(Now.AddHours(2)));
+        cached = field switch
+        {
+            "device_id" => cached with { DeviceId = value },
+            "install_id" => cached with { InstallId = value },
+            "cdid" => cached with { Cdid = value },
+            "openudid" => cached with { Openudid = value },
+            "clientudid" => cached with { Clientudid = value },
+            _ => throw new ArgumentOutOfRangeException(nameof(field))
+        };
+        await new PlainDoubaoCredentialCache(paths).SaveAsync(cached);
+        var client = new FakeDoubaoCredentialClient();
+        var logger = new RecordingDiagnosticLog();
+        var store = new DoubaoCredentialStore(paths, client, new FixedClock(Now), logger);
+
+        await store.EnsureCredentialsAsync();
+
+        Assert.Equal(1, client.RegisterCalls);
+        Assert.Equal(1, client.TokenCalls);
+        Assert.Contains("doubao.credentials.cache_incompatible", logger.LifecycleEvents);
+        foreach (var cachedValue in new[]
+                 {
+                     cached.Token,
+                     cached.DeviceId,
+                     cached.InstallId,
+                     cached.Cdid,
+                     cached.Openudid,
+                     cached.Clientudid
+                 }.Where(cachedValue => !string.IsNullOrEmpty(cachedValue)))
+        {
+            Assert.DoesNotContain(cachedValue, logger.Joined, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public async Task ExpiredTokenRefreshesAndPersistsExistingDeviceCredentials()
     {
         using var workspace = TestWorkspace.Create();
@@ -168,7 +242,12 @@ public sealed class DoubaoCredentialStoreTests
         {
             RegisterCalls++;
             return RegisterError is null
-                ? Task.FromResult(new RegisteredDoubaoDevice("device-1", "install-1", "cdid-1", "open-1", "client-1"))
+                ? Task.FromResult(new RegisteredDoubaoDevice(
+                    "device-1",
+                    "install-1",
+                    "cdid-1",
+                    "0011223344556677",
+                    "11111111-2222-3333-4444-555555555555"))
                 : Task.FromException<RegisteredDoubaoDevice>(RegisterError);
         }
 
