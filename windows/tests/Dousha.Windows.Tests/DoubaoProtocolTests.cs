@@ -363,21 +363,26 @@ public sealed class DoubaoProtocolTests
     [Fact]
     public void ResponseParserTreatsNonSuccessStatusAsTerminalProtocolFailure()
     {
-        var parser = new DoubaoAsrResponseParser(new RecordingDiagnosticLog());
+        var logger = new RecordingDiagnosticLog();
+        var parser = new DoubaoAsrResponseParser(logger);
+        const string rawStatusMessage = "Opus audio frame decode failed for token-secret and transcript words";
         var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
             RequestId: "request-1",
             MessageType: "TaskStarted",
             StatusCode: 500,
-            StatusMessage: "server detail",
+            StatusMessage: rawStatusMessage,
             ResultJson: ""));
 
         var exception = Assert.Throws<DoubaoProtocolException>(() => parser.Parse(response, "StartTask"));
 
         Assert.Equal("TaskStarted", exception.MessageType);
         Assert.Equal(500, exception.StatusCode);
-        Assert.Equal(13, exception.StatusMessageLength);
+        Assert.Equal(rawStatusMessage.Length, exception.StatusMessageLength);
         Assert.Equal("StartTask", exception.Phase);
-        Assert.DoesNotContain("server detail", exception.Message);
+        Assert.DoesNotContain(rawStatusMessage, logger.Joined, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(rawStatusMessage, exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("token-secret", logger.Joined, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("token-secret", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Dictionary<string, string> Query(string url)

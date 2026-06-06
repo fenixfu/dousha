@@ -187,6 +187,44 @@ public sealed class DictationSessionControllerTests
     }
 
     [Fact]
+    public async Task PendingStreamingFeedProtocolFailureRemainsDoubaoTranscriptionFailure()
+    {
+        var capture = new FakeCapture();
+        var backend = new FakeStreamingBackend("ignored")
+        {
+            FeedError = new DoubaoProtocolException("SessionFailed", 50700000, 75, "Streaming")
+        };
+        var insertion = new FakeInsertion();
+        var statusSink = new FakeStatusSink();
+        var logger = new FakeDiagnosticLog();
+        var errors = new List<NonBlockingErrorFeedback>();
+        var controller = new DictationSessionController(
+            new FakeCaptureFactory(capture),
+            backend,
+            insertion,
+            statusSink,
+            logger,
+            new FixedClock());
+        controller.NonBlockingError += errors.Add;
+
+        await controller.StartRecordingAsync();
+        capture.Emit(new AudioFrame([1, 2, 3, 4], TimeSpan.Zero));
+        await controller.StopAndProcessAsync();
+
+        Assert.Equal(DictationStatus.Error, controller.CurrentStatus);
+        Assert.Single(errors);
+        Assert.Equal(DiagnosticArea.Doubao, errors[0].Area);
+        Assert.Equal("transcription_failed", errors[0].EventName);
+        Assert.Contains((DiagnosticArea.Doubao, "transcription_failed", "DoubaoProtocolException"), logger.Errors);
+        Assert.DoesNotContain(logger.Errors, error => error.Area == DiagnosticArea.Audio);
+        Assert.False(backend.Stopped);
+        Assert.Null(insertion.InsertedText);
+        Assert.True(capture.Disposed);
+        Assert.True(backend.Disposed);
+        Assert.True(insertion.Disposed);
+    }
+
+    [Fact]
     public async Task CaptureStartErrorSurfacesAudioFeedbackLogsAndCleansUp()
     {
         var capture = new FakeCapture { StartError = new InvalidOperationException("device unavailable") };
@@ -403,6 +441,8 @@ public sealed class DictationSessionControllerTests
 
         public Exception? StopError { get; init; }
 
+        public Exception? FeedError { get; init; }
+
         public bool Disposed { get; private set; }
 
         public Task StartStreamingAsync(CancellationToken cancellationToken = default)
@@ -414,7 +454,7 @@ public sealed class DictationSessionControllerTests
         public Task FeedAudioAsync(AudioFrame frame, CancellationToken cancellationToken = default)
         {
             FedFrames.Add(frame);
-            return Task.CompletedTask;
+            return FeedError is null ? Task.CompletedTask : Task.FromException(FeedError);
         }
 
         public Task<string> StopStreamingAsync(CancellationToken cancellationToken = default)

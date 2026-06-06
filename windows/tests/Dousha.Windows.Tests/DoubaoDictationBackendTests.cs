@@ -21,7 +21,8 @@ public sealed class DoubaoDictationBackendTests
                 "TaskResponse",
                 20000000,
                 "ok",
-                "{\"results\":[{\"text\":\"你好，豆沙。\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
+                "{\"results\":[{\"text\":\"你好，豆沙。\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "SessionFinished", 20000000, "ok", ""))
         ]);
         var transportFactory = new FakeTransportClientFactory(transportClient);
         var backend = new DoubaoDictationBackend(
@@ -84,6 +85,8 @@ public sealed class DoubaoDictationBackendTests
     private sealed class ScriptedDoubaoTransportClient : IDoubaoTransportClient
     {
         private readonly Queue<byte[]> _responses;
+        private readonly TaskCompletionSource _finishSessionSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _receiveCount;
 
         public ScriptedDoubaoTransportClient(IEnumerable<byte[]> responses)
         {
@@ -95,12 +98,22 @@ public sealed class DoubaoDictationBackendTests
         public Task SendAsync(byte[] message, CancellationToken cancellationToken = default)
         {
             SentMessages.Add(message);
+            if (DoubaoAsrRequest.Decode(message).MethodName == "FinishSession")
+            {
+                _finishSessionSent.TrySetResult();
+            }
+
             return Task.CompletedTask;
         }
 
-        public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+        public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(_responses.Dequeue());
+            if (Interlocked.Increment(ref _receiveCount) > 2)
+            {
+                await _finishSessionSent.Task.WaitAsync(cancellationToken);
+            }
+
+            return _responses.Dequeue();
         }
 
         public ValueTask DisposeAsync()

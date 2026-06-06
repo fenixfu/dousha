@@ -72,12 +72,12 @@ public sealed class DictationSessionController
         {
             var audio = await _capture.StopAsync(cancellationToken);
             _diagnosticLog.AudioFrameCaptured(audio.ByteCount);
-            await WaitForPendingFeedsAsync();
 
-            SetStatus(DictationStatus.Transcribing);
             string transcript;
             try
             {
+                await WaitForPendingFeedsAsync();
+                SetStatus(DictationStatus.Transcribing);
                 transcript = _streamingBackend is null
                     ? await _backend.TranscribeAsync(audio, cancellationToken)
                     : await _streamingBackend.StopStreamingAsync(cancellationToken);

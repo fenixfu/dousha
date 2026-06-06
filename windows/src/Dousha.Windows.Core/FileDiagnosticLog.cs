@@ -4,6 +4,7 @@ public sealed class FileDiagnosticLog : IDiagnosticLog
 {
     private readonly WindowsUserDataPaths _paths;
     private readonly IClock _clock;
+    private readonly object _writeLock = new();
 
     public FileDiagnosticLog(WindowsUserDataPaths paths, IClock? clock = null)
     {
@@ -38,7 +39,10 @@ public sealed class FileDiagnosticLog : IDiagnosticLog
 
     private void Write(string message)
     {
-        Directory.CreateDirectory(_paths.LogsDirectory);
-        File.AppendAllText(_paths.CurrentLogFilePath, $"{_clock.Now:O}\t{message}{Environment.NewLine}");
+        lock (_writeLock)
+        {
+            Directory.CreateDirectory(_paths.LogsDirectory);
+            File.AppendAllText(_paths.CurrentLogFilePath, $"{_clock.Now:O}\t{message}{Environment.NewLine}");
+        }
     }
 }

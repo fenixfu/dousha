@@ -11,12 +11,19 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<byte> _pcmBuffer = [];
     private readonly DoubaoTranscriptAssembler _transcriptAssembler;
+    private readonly TaskCompletionSource<string> _sessionCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CancellationTokenSource? _receiveLoopCancellation;
+    private Task? _receiveLoopTask;
+    private Exception? _receiveFailure;
     private string _requestId = "";
     private string _token = "";
     private bool _sessionReady;
     private bool _started;
     private bool _sentAnyAudio;
+    private volatile bool _finishing;
     private int _audioFramesSent;
+
+    internal Task ReceiveLoopCompletion => _receiveLoopTask ?? Task.CompletedTask;
 
     public DoubaoAudioTransport(
         IDoubaoTransportClient client,
@@ -85,6 +92,8 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
                 expectedRequestId: requestId);
 
             _sessionReady = true;
+            _receiveLoopCancellation = new CancellationTokenSource();
+            _receiveLoopTask = ReceiveLoopAsync(_receiveLoopCancellation.Token);
             await FlushCompleteFramesLockedAsync(cancellationToken);
         }
         finally
@@ -98,6 +107,7 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            ThrowIfReceiveFailed();
             _pcmBuffer.AddRange(frame.Data.ToArray());
             if (_sessionReady)
             {
@@ -115,12 +125,15 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            ThrowIfReceiveFailed();
             if (_sessionReady)
             {
                 await FlushCompleteFramesLockedAsync(cancellationToken);
+                _finishing = true;
                 await SendLastFrameLockedAsync(cancellationToken);
             }
 
+            ThrowIfReceiveFailed();
             _diagnosticLog.Lifecycle($"doubao.transport.audio_frames_sent count={_audioFramesSent}");
             await _client.SendAsync(DoubaoAsrMessageBuilder.FinishSession(_requestId, _token), cancellationToken);
         }
@@ -129,47 +142,45 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
             _gate.Release();
         }
 
-        while (true)
+        try
         {
-            byte[] response;
-            try
-            {
-                response = await _client.ReceiveAsync(cancellationToken).WaitAsync(_finishTimeout, cancellationToken);
-            }
-            catch (TimeoutException)
-            {
-                _diagnosticLog.Lifecycle($"doubao.transport.finish_timeout timeoutMs={(int)_finishTimeout.TotalMilliseconds} partialLength={_transcriptAssembler.Text.Length}");
-                return "";
-            }
-
-            var recognitionEvent = _responseParser.Parse(response, "FinishSession");
-            if (recognitionEvent.MessageType == "SessionFinished")
-            {
-                var final = _transcriptAssembler.Text;
-                _diagnosticLog.Lifecycle($"doubao.transport.finished receivedFinal=True textLength={final.Length}");
-                return final;
-            }
-
-            _transcriptAssembler.Apply(recognitionEvent);
-            if (recognitionEvent.IsFinalized)
-            {
-                var final = _transcriptAssembler.Text;
-                _diagnosticLog.Lifecycle($"doubao.transport.finished receivedFinal=True textLength={final.Length}");
-                return final;
-            }
+            return await _sessionCompletion.Task.WaitAsync(_finishTimeout, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            await CancelAndJoinReceiveLoopAsync();
+            _diagnosticLog.Lifecycle($"doubao.transport.finish_timeout timeoutMs={(int)_finishTimeout.TotalMilliseconds} partialLength={_transcriptAssembler.Text.Length}");
+            return "";
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _client.DisposeAsync();
-        _encoder.Dispose();
+        _receiveLoopCancellation?.Cancel();
+        try
+        {
+            if (_receiveLoopTask is not null)
+            {
+                await _receiveLoopTask;
+            }
+
+            await _client.DisposeAsync();
+        }
+        catch (OperationCanceledException) when (_receiveLoopCancellation?.IsCancellationRequested is true)
+        {
+        }
+        finally
+        {
+            _receiveLoopCancellation?.Dispose();
+            _encoder.Dispose();
+        }
     }
 
     private async Task FlushCompleteFramesLockedAsync(CancellationToken cancellationToken)
     {
         while (_pcmBuffer.Count >= DoubaoAudioConstants.PcmBytesPerFrame)
         {
+            ThrowIfReceiveFailed();
             var frame = _pcmBuffer.Take(DoubaoAudioConstants.PcmBytesPerFrame).ToArray();
             _pcmBuffer.RemoveRange(0, DoubaoAudioConstants.PcmBytesPerFrame);
             var state = _sentAnyAudio ? FrameState.Middle : FrameState.First;
@@ -196,11 +207,65 @@ public sealed class DoubaoAudioTransport : IAsyncDisposable
 
     private async Task SendAudioFrameLockedAsync(byte[] pcmFrame, FrameState frameState, CancellationToken cancellationToken)
     {
+        ThrowIfReceiveFailed();
         var packet = _encoder.EncodeTenMillisecondFrame(pcmFrame);
         await _client.SendAsync(
             DoubaoAsrMessageBuilder.RecognitionFrame(_requestId, packet, frameState, _clock.Now.ToUnixTimeMilliseconds()),
             cancellationToken);
         _sentAnyAudio = true;
         _audioFramesSent++;
+    }
+
+    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                var response = await _client.ReceiveAsync(cancellationToken);
+                var recognitionEvent = _responseParser.Parse(response, _finishing ? "FinishSession" : "Streaming");
+                if (recognitionEvent.MessageType == "SessionFinished")
+                {
+                    CompleteSession();
+                    return;
+                }
+
+                _transcriptAssembler.Apply(recognitionEvent);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _sessionCompletion.TrySetCanceled(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            Interlocked.CompareExchange(ref _receiveFailure, exception, null);
+            _sessionCompletion.TrySetException(exception);
+        }
+    }
+
+    private void CompleteSession()
+    {
+        var final = _transcriptAssembler.Text;
+        _diagnosticLog.Lifecycle($"doubao.transport.finished receivedFinal=True textLength={final.Length}");
+        _sessionCompletion.TrySetResult(final);
+    }
+
+    private async Task CancelAndJoinReceiveLoopAsync()
+    {
+        _receiveLoopCancellation?.Cancel();
+        if (_receiveLoopTask is not null)
+        {
+            await _receiveLoopTask;
+        }
+    }
+
+    private void ThrowIfReceiveFailed()
+    {
+        var failure = Volatile.Read(ref _receiveFailure);
+        if (failure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
     }
 }
