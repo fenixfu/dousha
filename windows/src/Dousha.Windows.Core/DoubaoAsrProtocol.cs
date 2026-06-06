@@ -269,7 +269,7 @@ public sealed class DoubaoAsrResponseParser
 
     private void ThrowIfTerminalFailure(DoubaoAsrResponse response, string phase)
     {
-        if (response.StatusCode != 200 || response.MessageType.EndsWith("Failed", StringComparison.OrdinalIgnoreCase))
+        if (response.StatusCode != 20000000 || response.MessageType.EndsWith("Failed", StringComparison.OrdinalIgnoreCase))
         {
             ThrowControlFailure(response, phase, "terminal");
         }

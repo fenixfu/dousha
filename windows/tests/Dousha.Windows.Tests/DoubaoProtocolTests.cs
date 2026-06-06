@@ -246,19 +246,19 @@ public sealed class DoubaoProtocolTests
         var control = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
             RequestId: "request-1",
             MessageType: "SessionStarted",
-            StatusCode: 200,
+            StatusCode: 20000000,
             StatusMessage: "ok",
             ResultJson: ""));
         var heartbeat = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
             RequestId: "request-1",
             MessageType: "TaskResponse",
-            StatusCode: 200,
+            StatusCode: 20000000,
             StatusMessage: "ok",
             ResultJson: "{\"results\":[]}"));
         var recognition = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
             RequestId: "request-1",
             MessageType: "TaskResponse",
-            StatusCode: 200,
+            StatusCode: 20000000,
             StatusMessage: "ok",
             ResultJson: "{\"results\":[{\"text\":\"旧文本\",\"is_interim\":true,\"is_vad_finished\":false},{\"text\":\"完整听写文本\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"));
 
@@ -286,7 +286,7 @@ public sealed class DoubaoProtocolTests
         var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
             RequestId: "request-1",
             MessageType: "TaskResponse",
-            StatusCode: 200,
+            StatusCode: 20000000,
             StatusMessage: "ok",
             ResultJson: "{\"results\":[{\"text\":\"非流式结果\",\"is_interim\":true,\"is_vad_finished\":false,\"extra\":{\"nonstream_result\":true}}]}"));
 
@@ -316,6 +316,48 @@ public sealed class DoubaoProtocolTests
         Assert.Equal("StartTask", exception.Phase);
         Assert.Contains("doubao.protocol.failure messageType=SessionFailed statusCode=40000000 statusMessageLength=0 phase=StartTask", logger.Joined);
         Assert.DoesNotContain("request-1", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("TaskFailed")]
+    [InlineData("SessionFailed")]
+    public void ResponseParserTreatsFailedMessageTypeAsTerminalRegardlessOfStatusCode(string messageType)
+    {
+        var parser = new DoubaoAsrResponseParser(new RecordingDiagnosticLog());
+        var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+            RequestId: "request-1",
+            MessageType: messageType,
+            StatusCode: 20000000,
+            StatusMessage: "ok",
+            ResultJson: ""));
+
+        var exception = Assert.Throws<DoubaoProtocolException>(() => parser.Parse(response, "control"));
+
+        Assert.Equal(messageType, exception.MessageType);
+        Assert.Equal(20000000, exception.StatusCode);
+        Assert.Equal("terminal", exception.Reason);
+    }
+
+    [Fact]
+    public void ResponseParserTreatsLegacyHttpSuccessStatusAsTerminal()
+    {
+        var parser = new DoubaoAsrResponseParser(new RecordingDiagnosticLog());
+        var response = DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+            RequestId: "request-1",
+            MessageType: "TaskStarted",
+            StatusCode: 200,
+            StatusMessage: "ok",
+            ResultJson: ""));
+
+        var exception = Assert.Throws<DoubaoProtocolException>(() => parser.ParseControl(
+            response,
+            "StartTask",
+            expectedMessageType: "TaskStarted",
+            expectedRequestId: "request-1"));
+
+        Assert.Equal("TaskStarted", exception.MessageType);
+        Assert.Equal(200, exception.StatusCode);
+        Assert.Equal("terminal", exception.Reason);
     }
 
     [Fact]

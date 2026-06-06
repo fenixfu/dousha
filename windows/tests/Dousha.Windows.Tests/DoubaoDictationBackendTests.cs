@@ -14,12 +14,12 @@ public sealed class DoubaoDictationBackendTests
         var credentialClient = new FakeCredentialClient();
         var credentialStore = new DoubaoCredentialStore(paths, credentialClient, new FixedClock(), diagnostics);
         var transportClient = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-10", "SessionStarted", 20000000, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "ignored",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"你好，豆沙。\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
         ]);

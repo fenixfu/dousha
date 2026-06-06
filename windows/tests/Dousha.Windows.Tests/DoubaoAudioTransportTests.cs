@@ -100,12 +100,12 @@ public sealed class DoubaoAudioTransportTests
             DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_000),
             TimeSpan.FromMilliseconds(7));
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "request-1",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"你好，豆沙。\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
         ]);
@@ -145,12 +145,12 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new CapturingEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "request-1",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"done\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}"))
         ]);
@@ -179,9 +179,9 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new CapturingEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 20000000, "ok", ""))
         ]);
         var transport = new DoubaoAudioTransport(
             client,
@@ -213,8 +213,8 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new CapturingEncoder();
         var client = new WaitingDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", ""))
         ]);
         var transport = new DoubaoAudioTransport(
             client,
@@ -238,27 +238,27 @@ public sealed class DoubaoAudioTransportTests
         using var encoder = new CapturingEncoder();
         var diagnostics = new RecordingDiagnosticLog();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "request-1",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"first long interim\",\"is_interim\":true,\"is_vad_finished\":false}]}")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "request-1",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"two\",\"is_interim\":true,\"is_vad_finished\":false}]}")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
                 "request-1",
                 "TaskResponse",
-                200,
+                20000000,
                 "ok",
                 "{\"results\":[{\"text\":\"two final\",\"is_interim\":false,\"is_vad_finished\":true,\"extra\":{\"nonstream_result\":false}}]}")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 20000000, "ok", ""))
         ]);
         var transport = new DoubaoAudioTransport(
             client,
@@ -300,11 +300,43 @@ public sealed class DoubaoAudioTransportTests
     }
 
     [Fact]
+    public async Task TransportAcceptsCanonicalControlSuccessCodes()
+    {
+        using var encoder = new ConcentusDoubaoOpusEncoder();
+        var client = new ScriptedDoubaoTransportClient([
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse(
+                "request-1",
+                "TaskResponse",
+                20000000,
+                "ok",
+                "{\"results\":[{\"text\":\"canonical success\",\"is_interim\":false,\"is_vad_finished\":true}]}")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFinished", 20000000, "ok", ""))
+        ]);
+        var diagnostics = new RecordingDiagnosticLog();
+        var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
+
+        var transcript = await transport.TranscribeAsync(
+            AudioWithFrames(1),
+            Credentials(),
+            "request-1",
+            contextHint: "",
+            CancellationToken.None);
+
+        var sentRequests = client.SentMessages.Select(message => DoubaoAsrRequest.Decode(message)).ToArray();
+        Assert.Equal("canonical success", transcript);
+        Assert.Equal(
+            ["StartTask", "StartSession", "TaskRequest", "TaskRequest", "FinishSession"],
+            sentRequests.Select(request => request.MethodName));
+    }
+
+    [Fact]
     public async Task TransportAbortsWithoutAudioFramesWhenStartTaskReceivesWrongSuccessControlMessage()
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionStarted", 20000000, "ok", ""))
         ]);
         var diagnostics = new RecordingDiagnosticLog();
         var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
@@ -329,7 +361,7 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("other-request", "TaskStarted", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("other-request", "TaskStarted", 20000000, "ok", ""))
         ]);
         var diagnostics = new RecordingDiagnosticLog();
         var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
@@ -354,7 +386,7 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
             DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "SessionFailed", 40000000, "bad request", ""))
         ]);
         var diagnostics = new RecordingDiagnosticLog();
@@ -381,8 +413,8 @@ public sealed class DoubaoAudioTransportTests
     {
         using var encoder = new ConcentusDoubaoOpusEncoder();
         var client = new ScriptedDoubaoTransportClient([
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", "")),
-            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 200, "ok", ""))
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", "")),
+            DoubaoAsrResponse.Encode(new DoubaoAsrResponse("request-1", "TaskStarted", 20000000, "ok", ""))
         ]);
         var diagnostics = new RecordingDiagnosticLog();
         var transport = new DoubaoAudioTransport(client, encoder, diagnostics);
