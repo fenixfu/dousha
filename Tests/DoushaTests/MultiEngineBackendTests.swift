@@ -15,6 +15,9 @@ final class MultiEngineBackendTests: XCTestCase {
         let partialOnStart: String?
         private(set) var startCalled = false
         private(set) var cancelCalled = false
+        /// Captured in `beginSession` so a test can drive partials on demand
+        /// (QUA-180 fallback timing tests), mirroring an engine emitting mid-session.
+        private var partialSink: (@Sendable (PartialTranscript) -> Void)?
 
         init(text: String, errorOnStart: Error? = nil, stopDelay: TimeInterval = 0,
              partialOnStart: String? = nil) {
@@ -28,10 +31,15 @@ final class MultiEngineBackendTests: XCTestCase {
         func beginSession(onPartial: @escaping @Sendable (PartialTranscript) -> Void,
                           onError: @escaping @Sendable (Error) -> Void) async {
             startCalled = true
+            partialSink = onPartial
             if let p = partialOnStart {
                 onPartial(PartialTranscript(finalText: p, interimText: ""))
             }
             if let e = errorOnStart { onError(e) }
+        }
+        /// Emit a cumulative partial mid-session (after `beginSession`).
+        func emit(_ text: String) {
+            partialSink?(PartialTranscript(finalText: text, interimText: ""))
         }
         func openStream() {}
         func finish(completion: @escaping @Sendable (TranscriptionResult) -> Void) {
@@ -131,15 +139,37 @@ final class MultiEngineBackendTests: XCTestCase {
         XCTAssertTrue(soniox.startCalled)
     }
 
-    func testStart_primaryErrorIsFatal() async {
+    func testStart_primaryErrorAlone_isNonFatal_secondaryCarriesSession() async {
+        // QUA-180: 豆包 (primary) errors at openStream (e.g. WS TLS failure), but
+        // Soniox is alive. The error must NOT be fatal — the session keeps running
+        // and the secondary's transcript is returned, not a dropped recording.
         let doubao = MockBackend(text: "", errorOnStart: NSError(domain: "t", code: 2))
-        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, MockBackend(text: "ok"))],
+        let soniox = MockBackend(text: "ok")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
+                                       primary: .doubao, router: router)
+        let stream = multi.start()
+        multi.stop()
+        var sawError = false
+        var final: TranscriptionResult?
+        for await event in stream {
+            if case .error = event { sawError = true }
+            if case .final(let r) = event { final = r }
+        }
+        XCTAssertFalse(sawError, "a primary error must not be fatal while a secondary is alive")
+        XCTAssertEqual(final?.text, "ok", "the secondary must carry the final transcript")
+    }
+
+    func testStart_allEnginesError_isFatal() async {
+        // Only when EVERY engine fails (e.g. full network loss) is the error fatal.
+        let doubao = MockBackend(text: "", errorOnStart: NSError(domain: "t", code: 2))
+        let soniox = MockBackend(text: "", errorOnStart: NSError(domain: "t", code: 3))
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
                                        primary: .doubao, router: router)
         let stream = multi.start()
         multi.stop()
         var sawError = false
         for await event in stream { if case .error = event { sawError = true } }
-        XCTAssertTrue(sawError, "the primary engine's error must be forwarded as a stream .error event")
+        XCTAssertTrue(sawError, "with every engine down, the error must be forwarded as fatal")
     }
 
     func testStop_englishEarlyExit_doesNotWaitForSlowChineseEngine() async {
@@ -225,6 +255,133 @@ final class MultiEngineBackendTests: XCTestCase {
                                        primary: .doubao, router: router)
         let result = await finalResult(multi)
         XCTAssertEqual(result.text, "你好世界你好啊")
+    }
+
+    // MARK: - QUA-180 HUD fallback to secondary
+
+    /// Collects every `.partial` text the HUD would render, driving the stream to
+    /// its terminal `.final`.
+    private func hudPartials(_ multi: MultiEngineBackend) async -> [String] {
+        let stream = multi.start()
+        multi.stop()
+        var partials: [String] = []
+        for await event in stream {
+            switch event {
+            case .partial(let p): partials.append(p.combined)
+            case .final: return partials
+            default: break
+            }
+        }
+        return partials
+    }
+
+    func testHUD_primarySilent_fallsBackToSecondaryPartial() async {
+        // 豆包 (primary) emits no partial — dead WS, frames=0. Soniox does. With a
+        // zero-length fallback window the secondary's partial must reach the HUD,
+        // so the live-subtitle area is no longer blank (QUA-180).
+        let doubao = MockBackend(text: "")                                  // no partialOnStart
+        let soniox = MockBackend(text: "你好", partialOnStart: "你好世界实时字幕")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
+                                       primary: .doubao, router: router,
+                                       hudFallbackSeconds: 0)
+        let partials = await hudPartials(multi)
+        XCTAssertTrue(partials.contains("你好世界实时字幕"),
+                      "secondary partial must drive the HUD when the primary is silent")
+    }
+
+    func testHUD_primaryActive_secondaryPartialSuppressed() async {
+        // Both engines emit partials and the fallback window is wide. The active
+        // primary owns the HUD; the secondary's partial must NOT appear.
+        let doubao = MockBackend(text: "你好", partialOnStart: "豆包实时字幕")
+        let soniox = MockBackend(text: "你好", partialOnStart: "搜你克斯实时字幕")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
+                                       primary: .doubao, router: router,
+                                       hudFallbackSeconds: 10)
+        let partials = await hudPartials(multi)
+        XCTAssertTrue(partials.contains("豆包实时字幕"), "primary partial must drive the HUD")
+        XCTAssertFalse(partials.contains("搜你克斯实时字幕"),
+                       "an active primary must suppress the secondary's HUD partials")
+    }
+
+    func testHUD_primaryResumesAfterFallback_reclaimsHUD() async {
+        // Full lifecycle: 豆包 silent past the window → Soniox drives the HUD; 豆包
+        // then resumes → its partial reclaims the HUD AND re-suppresses the next
+        // secondary partial (the liveness clock reset). QUA-180's core semantic.
+        let doubao = MockBackend(text: "你好")
+        let soniox = MockBackend(text: "你好")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
+                                       primary: .doubao, router: router,
+                                       hudFallbackSeconds: 0.2)
+        let stream = multi.start()
+        // Consume partials concurrently while we drive the engines below.
+        let collected = Task { () -> [String] in
+            var out: [String] = []
+            for await event in stream {
+                switch event {
+                case .partial(let p): out.append(p.combined)
+                case .final: return out
+                default: break
+                }
+            }
+            return out
+        }
+
+        await eventually({ doubao.startCalled && soniox.startCalled })
+        try? await Task.sleep(nanoseconds: 300_000_000)   // outlast the 0.2s silence window
+
+        soniox.emit("副字幕回退")     // 豆包 silent → secondary drives the HUD
+        doubao.emit("主字幕恢复")     // 豆包 back → reclaims the HUD, resets the clock
+        soniox.emit("副字幕被压制")   // 豆包 just active → secondary suppressed again
+
+        multi.stop()
+        let partials = await collected.value
+        XCTAssertTrue(partials.contains("副字幕回退"),
+                      "secondary must drive the HUD while the primary is silent")
+        XCTAssertTrue(partials.contains("主字幕恢复"),
+                      "a resumed primary partial must reclaim the HUD")
+        XCTAssertFalse(partials.contains("副字幕被压制"),
+                       "a freshly-resumed primary must re-suppress the secondary")
+    }
+
+    func testHUD_primaryError_secondaryTakesOverImmediately() async {
+        // Primary errors at openStream → HUD must switch to the secondary on its
+        // next partial WITHOUT waiting out the silence window (markPrimaryFailed).
+        // The window is huge so only the error path can trigger the fallback.
+        let doubao = MockBackend(text: "", errorOnStart: NSError(domain: "t", code: 2))
+        let soniox = MockBackend(text: "你好")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao), (.soniox, soniox)],
+                                       primary: .doubao, router: router,
+                                       hudFallbackSeconds: 100)
+        let stream = multi.start()
+        let collected = Task { () -> [String] in
+            var out: [String] = []
+            for await event in stream {
+                switch event {
+                case .partial(let p): out.append(p.combined)
+                case .final: return out
+                default: break
+                }
+            }
+            return out
+        }
+        await eventually({ doubao.startCalled && soniox.startCalled })
+        soniox.emit("副字幕立即接管")
+        multi.stop()
+        let partials = await collected.value
+        XCTAssertTrue(partials.contains("副字幕立即接管"),
+                      "a primary error must hand the HUD to the secondary immediately")
+    }
+
+    func testHUD_singleEngine_noFallbackEngine_primaryStillDrivesHUD() async {
+        // One-engine session: hudFallbackEngine is nil. The primary must still
+        // drive the HUD and nothing should crash on the absent fallback.
+        let doubao = MockBackend(text: "你好", partialOnStart: "单引擎字幕")
+        let multi = MultiEngineBackend(entries: [(.doubao, doubao)],
+                                       primary: .doubao, router: router,
+                                       hudFallbackSeconds: 0)
+        let partials = await hudPartials(multi)
+        XCTAssertTrue(partials.contains("单引擎字幕"),
+                      "the sole engine must drive the HUD even with no fallback engine")
     }
 
     func testCancel_cancelsAllEngines() async {
