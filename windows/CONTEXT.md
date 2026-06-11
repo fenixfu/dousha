@@ -12,6 +12,10 @@ _Avoid_: Direct Swift port, macOS clone
 A flow where the user triggers recording, speaks, receives a transcript, and the resulting text appears in the active text target.
 _Avoid_: Feature parity, full clone
 
+**Post-Processing Strategy Evaluation**:
+A controlled comparison of Doubao Text Post-Processing and Dictation Post-Processing by recognition speed, transcript accuracy, and lived dictation experience before choosing a Windows implementation.
+_Avoid_: .NET versus Swift benchmark, feature-count comparison, settings comparison
+
 **Windows Tray Dictation App**:
 A background Windows app surfaced from the notification area for settings and status.
 _Avoid_: Menu-bar app, Dock app
@@ -171,6 +175,8 @@ _Avoid_: Per-sentence routing, transcript merging
 ## Relationships
 
 - The **Windows Port** preserves the **Core Dictation Experience**.
+- A **Post-Processing Strategy Evaluation** precedes the choice of the long-term Windows implementation.
+- A **Post-Processing Strategy Evaluation** compares **Doubao Text Post-Processing** with **Dictation Post-Processing** independently of whether the implementation uses .NET or Swift.
 - The **Windows Port** is delivered as a **Windows Tray Dictation App**.
 - A **Windows Tray Dictation App** exposes configuration through a **Settings Window**.
 - A **Windows Tray Dictation App** provides **Minimal Status Feedback** in the **First Usable Windows Version**.
