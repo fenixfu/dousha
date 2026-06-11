@@ -16,6 +16,7 @@ DoubaoIME-decompiled/
 
 # Third-party reference projects kept locally for inspiration
 BorderBeam/
+docs/research_repos/
 
 # Per-developer signing config (Apple Developer ID, notary profile)
 Makefile.local
