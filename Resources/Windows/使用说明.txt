@@ -40,5 +40,32 @@ Dousha for Windows — 按住说话，松开上屏
    它会逐项检查网络、凭证、识别服务，并告诉你哪一步挂了。
 5. 日志在 %LOCALAPPDATA%\Dousha\Logs\dousha.log，发给开发者就能定位（也可以右键托盘图标 → 打开日志文件夹）。
 
+【粘贴到 WSL / Linux 图形应用】
+如果要把文字贴进 WSLg / Xwayland / Xfce 等 Linux 图形窗口（窗口标题通常以
+"Xwayland on :" 开头），Dousha 默认会自动改成发送 Alt+V，而不是 Ctrl+V。
+
+你需要在 Linux 侧做一个「桥接脚本」，把 Windows 剪贴板内容转写到 X11 剪贴板，
+再触发粘贴。经测试可用的脚本如下（需要安装 xclip、xdotool）：
+
+  #!/bin/bash
+  raw=$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command \
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard -Raw' \
+      2>/dev/null | tr -d '\r')
+  if [ -n "$raw" ]; then
+      printf '%s' "$raw" | xclip -selection clipboard -target UTF8_STRING
+      xdotool key --clearmodifiers --delay 1 ctrl+shift+v
+  fi
+
+把脚本存到 WSL 里（例如 ~/.local/bin/dousha-bridge.sh），加上可执行权限，
+然后在 Xfce / 你的桌面环境里把 Alt+V 绑定到这条命令：
+
+  /home/你的用户名/.local/bin/dousha-bridge.sh
+
+窗口标题前缀和快捷键可以在 config.json 里改：
+  xwaylandWindowTitlePrefix: "Xwayland on :"
+  xwaylandPasteShortcut: "alt+v"
+
+如果 Linux 窗口不是 Xwayland（标题不匹配），Dousha 会继续发送普通 Ctrl+V。
+
 【退出】
 右键托盘图标 → 退出。
