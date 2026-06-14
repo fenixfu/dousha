@@ -23,6 +23,7 @@ protocol TextInjectorWindowsAPI: AnyObject {
     func freeMemory(_ memory: HGLOBAL)
     func sendInput(_ inputs: inout [INPUT]) -> (sent: UINT, error: DWORD)
     func lastError() -> DWORD
+    func foregroundWindowTitle() -> String?
 }
 
 /// Sendable because the owner HWND is immutable and remains valid for the
@@ -38,13 +39,22 @@ struct TextInjector: @unchecked Sendable {
     }
 
     func type(_ text: String) {
-        Self.type(text, owner: owner, api: NativeTextInjectorWindowsAPI(), log: doushaLog)
+        Self.type(
+            text,
+            owner: owner,
+            api: NativeTextInjectorWindowsAPI(),
+            xwaylandWindowTitlePrefix: gConfig.xwaylandWindowTitlePrefix,
+            xwaylandPasteShortcut: gConfig.xwaylandPasteShortcut,
+            log: doushaLog
+        )
     }
 
     static func type(
         _ text: String,
         owner: HWND?,
         api: TextInjectorWindowsAPI,
+        xwaylandWindowTitlePrefix: String = "",
+        xwaylandPasteShortcut: String = "alt+v",
         log: (String) -> Void
     ) {
         guard !text.isEmpty else { return }
@@ -54,15 +64,37 @@ struct TextInjector: @unchecked Sendable {
         }
         guard writeUnicodeTextToClipboard(text, owner: owner, api: api, log: log) else { return }
 
-        var inputs = pasteInputs()
-        let result = api.sendInput(&inputs)
-        guard Int(result.sent) != inputs.count else {
-            log("[TextInjector] dispatched Ctrl+V")
+        let shortcut: PasteShortcut
+        if let parsed = PasteShortcut(parsing: xwaylandPasteShortcut) {
+            shortcut = parsed
+        } else {
+            shortcut = .default
+            log("[TextInjector] invalid xwaylandPasteShortcut '\(xwaylandPasteShortcut)'; falling back to \(shortcut.description)")
+        }
+
+        let title = api.foregroundWindowTitle()
+        let (inputs, shortcutName) = xwaylandInputsIfMatching(
+            title: title,
+            prefix: xwaylandWindowTitlePrefix,
+            shortcut: shortcut
+        )
+        if let title, title.hasPrefix(xwaylandWindowTitlePrefix), !xwaylandWindowTitlePrefix.isEmpty {
+            log("[TextInjector] WSL Desktop Paste Target detected; sending \(shortcutName)")
+        } else if title == nil {
+            log("[TextInjector] foreground window title unreadable; falling back to \(shortcutName)")
+        } else {
+            log("[TextInjector] foreground window title does not match prefix; sending \(shortcutName)")
+        }
+
+        var mutableInputs = inputs
+        let result = api.sendInput(&mutableInputs)
+        guard Int(result.sent) != mutableInputs.count else {
+            log("[TextInjector] dispatched \(shortcutName)")
             return
         }
 
-        log("[TextInjector] Ctrl+V SendInput sent \(result.sent)/\(inputs.count) events (err=\(result.error))")
-        var cleanup = keyUpCleanup(afterSentPrefix: min(Int(result.sent), inputs.count))
+        log("[TextInjector] \(shortcutName) SendInput sent \(result.sent)/\(mutableInputs.count) events (err=\(result.error))")
+        var cleanup = keyUpCleanup(for: mutableInputs, afterSentPrefix: Int(result.sent))
         guard !cleanup.isEmpty else { return }
 
         let cleanupResult = api.sendInput(&cleanup)
@@ -140,23 +172,32 @@ struct TextInjector: @unchecked Sendable {
         ]
     }
 
-    private static func keyUpCleanup(afterSentPrefix sent: Int) -> [INPUT] {
-        switch sent {
-        case 1:
-            return [keyboardInput(virtualKey: 0x11, keyUp: true)]
-        case 2:
-            return [
-                keyboardInput(virtualKey: 0x56, keyUp: true),
-                keyboardInput(virtualKey: 0x11, keyUp: true),
-            ]
-        case 3:
-            return [keyboardInput(virtualKey: 0x11, keyUp: true)]
-        default:
-            return []
+    private static func xwaylandInputsIfMatching(
+        title: String?,
+        prefix: String,
+        shortcut: PasteShortcut
+    ) -> (inputs: [INPUT], name: String) {
+        if let title, title.hasPrefix(prefix), !prefix.isEmpty {
+            return (shortcut.inputs(), shortcut.description)
         }
+        return (pasteInputs(), "Ctrl+V")
     }
 
-    private static func keyboardInput(virtualKey: WORD, keyUp: Bool) -> INPUT {
+    private static func keyUpCleanup(for inputs: [INPUT], afterSentPrefix sent: Int) -> [INPUT] {
+        var held: [WORD] = []
+        for input in inputs.prefix(sent) {
+            guard input.type == DWORD(INPUT_KEYBOARD) else { continue }
+            let vk = input.ki.wVk
+            if (input.ki.dwFlags & DWORD(KEYEVENTF_KEYUP)) == 0 {
+                held.append(vk)
+            } else if let index = held.lastIndex(of: vk) {
+                held.remove(at: index)
+            }
+        }
+        return held.reversed().map { keyboardInput(virtualKey: $0, keyUp: true) }
+    }
+
+    fileprivate static func keyboardInput(virtualKey: WORD, keyUp: Bool) -> INPUT {
         var input = INPUT()
         input.type = DWORD(INPUT_KEYBOARD)
         input.ki = KEYBDINPUT(
@@ -167,6 +208,80 @@ struct TextInjector: @unchecked Sendable {
             dwExtraInfo: 0
         )
         return input
+    }
+}
+
+struct PasteShortcut {
+    private let modifiers: [Modifier]
+    private let key: String
+
+    private enum Modifier: Hashable {
+        case alt, ctrl, shift
+
+        var virtualKey: WORD {
+            switch self {
+            case .alt: return WORD(VK_MENU)
+            case .ctrl: return WORD(VK_CONTROL)
+            case .shift: return WORD(VK_SHIFT)
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .alt: return "alt"
+            case .ctrl: return "ctrl"
+            case .shift: return "shift"
+            }
+        }
+    }
+
+    init?(parsing string: String) {
+        let parts = string.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2 else { return nil }
+        let keyPart = parts.last!.lowercased()
+        guard keyPart.count == 1,
+              let keyChar = keyPart.first,
+              let ascii = keyChar.asciiValue,
+              (ascii >= 0x61 && ascii <= 0x7A) else { return nil }
+
+        var modifiers: [Modifier] = []
+        var seen: Set<Modifier> = []
+        for part in parts.dropLast() {
+            let modifier: Modifier
+            switch part.lowercased() {
+            case "alt": modifier = .alt
+            case "ctrl": modifier = .ctrl
+            case "shift": modifier = .shift
+            default: return nil
+            }
+            guard seen.insert(modifier).inserted else { return nil }
+            modifiers.append(modifier)
+        }
+        self.modifiers = modifiers
+        self.key = String(keyChar)
+    }
+
+    static let `default` = PasteShortcut(parsing: "alt+v")!
+
+    private var keyCode: WORD {
+        WORD(key.uppercased().utf16.first!)
+    }
+
+    var description: String {
+        modifiers.map { $0.description }.joined(separator: "+") + "+\(key)"
+    }
+
+    func inputs() -> [INPUT] {
+        var inputs: [INPUT] = []
+        for modifier in modifiers {
+            inputs.append(TextInjector.keyboardInput(virtualKey: modifier.virtualKey, keyUp: false))
+        }
+        inputs.append(TextInjector.keyboardInput(virtualKey: keyCode, keyUp: false))
+        inputs.append(TextInjector.keyboardInput(virtualKey: keyCode, keyUp: true))
+        for modifier in modifiers.reversed() {
+            inputs.append(TextInjector.keyboardInput(virtualKey: modifier.virtualKey, keyUp: true))
+        }
+        return inputs
     }
 }
 
@@ -217,6 +332,16 @@ private final class NativeTextInjectorWindowsAPI: TextInjectorWindowsAPI {
 
     func lastError() -> DWORD {
         GetLastError()
+    }
+
+    func foregroundWindowTitle() -> String? {
+        guard let hwnd = GetForegroundWindow() else { return nil }
+        let length = Int(GetWindowTextLengthW(hwnd))
+        guard length > 0 else { return "" }
+        var buffer: [WCHAR] = Array(repeating: 0, count: length + 1)
+        let copied = Int(GetWindowTextW(hwnd, &buffer, Int32(buffer.count)))
+        guard copied > 0 else { return nil }
+        return String(decoding: buffer.prefix(copied), as: UTF16.self)
     }
 }
 #endif

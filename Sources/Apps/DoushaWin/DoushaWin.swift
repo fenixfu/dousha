@@ -36,6 +36,10 @@ struct WinConfig: Codable {
     /// Swallow the hotkey so the focused app never sees it (a held Ctrl
     /// would otherwise trigger shortcuts mid-dictation).
     var swallowHotkey: Bool = true
+    /// Window-title prefix that identifies a WSL Desktop Paste Target.
+    var xwaylandWindowTitlePrefix: String = "Xwayland on :"
+    /// Shortcut sent to a WSL Desktop Paste Target instead of Ctrl+V.
+    var xwaylandPasteShortcut: String = "alt+v"
 
     static let vkMap: [String: UInt32] = [
         "rightctrl": 0xA3, "leftctrl": 0xA2,

@@ -122,7 +122,13 @@ final class TextInjectorTests: XCTestCase {
 
         XCTAssertEqual(api.sentInputBatches.count, 1)
         XCTAssertEqual(api.sentInputBatches[0].count, 4)
-        XCTAssertEqual(logs, ["[TextInjector] Ctrl+V SendInput sent 0/4 events (err=5)"])
+        XCTAssertEqual(
+            logs,
+            [
+                "[TextInjector] foreground window title unreadable; falling back to Ctrl+V",
+                "[TextInjector] Ctrl+V SendInput sent 0/4 events (err=5)",
+            ]
+        )
     }
 
     func testPartialPasteDispatchSendsOnlyNecessaryKeyUpCleanup() throws {
@@ -162,10 +168,185 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(
             logs,
             [
+                "[TextInjector] foreground window title unreadable; falling back to Ctrl+V",
                 "[TextInjector] Ctrl+V SendInput sent 2/4 events (err=5)",
                 "[TextInjector] key-up cleanup sent 1/2 events (err=87)",
             ]
         )
+    }
+
+    func testPasteShortcutParsesAltV() throws {
+        let shortcut = try XCTUnwrap(PasteShortcut(parsing: "alt+v"))
+        let inputs = shortcut.inputs()
+
+        XCTAssertEqual(inputs.count, 4)
+        XCTAssertEqual(inputs.map { $0.type }, Array(repeating: DWORD(INPUT_KEYBOARD), count: 4))
+        XCTAssertEqual(inputs.map { $0.ki.wVk }, [WORD(0x12), WORD(0x56), WORD(0x56), WORD(0x12)])
+        XCTAssertEqual(
+            inputs.map { $0.ki.dwFlags },
+            [DWORD(0), DWORD(0), DWORD(KEYEVENTF_KEYUP), DWORD(KEYEVENTF_KEYUP)]
+        )
+    }
+
+    func testPasteShortcutParsesMultipleModifiersCaseInsensitively() throws {
+        let shortcut = try XCTUnwrap(PasteShortcut(parsing: "Ctrl+SHIFT+v"))
+        let inputs = shortcut.inputs()
+
+        XCTAssertEqual(inputs.map { $0.ki.wVk }, [WORD(0x11), WORD(0x10), WORD(0x56), WORD(0x56), WORD(0x10), WORD(0x11)])
+        XCTAssertEqual(
+            inputs.map { $0.ki.dwFlags },
+            [DWORD(0), DWORD(0), DWORD(0), DWORD(KEYEVENTF_KEYUP), DWORD(KEYEVENTF_KEYUP), DWORD(KEYEVENTF_KEYUP)]
+        )
+    }
+
+    func testPasteShortcutReturnsNilForInvalidStrings() {
+        XCTAssertNil(PasteShortcut(parsing: ""))
+        XCTAssertNil(PasteShortcut(parsing: "v"))
+        XCTAssertNil(PasteShortcut(parsing: "alt+"))
+        XCTAssertNil(PasteShortcut(parsing: "alt+v+v"))
+        XCTAssertNil(PasteShortcut(parsing: "alt+1"))
+        XCTAssertNil(PasteShortcut(parsing: "win+v"))
+        XCTAssertNil(PasteShortcut(parsing: "alt+alt+v"))
+    }
+
+    func testWinConfigDefaultsAndCodableRoundTrip() throws {
+        let cfg = WinConfig()
+        XCTAssertEqual(cfg.xwaylandWindowTitlePrefix, "Xwayland on :")
+        XCTAssertEqual(cfg.xwaylandPasteShortcut, "alt+v")
+
+        let data = try JSONEncoder().encode(cfg)
+        let decoded = try JSONDecoder().decode(WinConfig.self, from: data)
+        XCTAssertEqual(decoded.xwaylandWindowTitlePrefix, "Xwayland on :")
+        XCTAssertEqual(decoded.xwaylandPasteShortcut, "alt+v")
+    }
+
+    func testMatchingForegroundTitleSendsXwaylandShortcut() {
+        let api = FakeTextInjectorWindowsAPI()
+        api.foregroundTitle = "Xwayland on :0 (Ubuntu)"
+        var logs: [String] = []
+
+        TextInjector.type(
+            "text",
+            owner: nil,
+            api: api,
+            xwaylandWindowTitlePrefix: "Xwayland on :",
+            xwaylandPasteShortcut: "alt+v",
+            log: { logs.append($0) }
+        )
+
+        let inputs = api.sentInputBatches.first
+        XCTAssertEqual(inputs?.map { $0.ki.wVk }, [WORD(0x12), WORD(0x56), WORD(0x56), WORD(0x12)])
+        XCTAssertEqual(
+            logs,
+            [
+                "[TextInjector] WSL Desktop Paste Target detected; sending alt+v",
+                "[TextInjector] dispatched alt+v",
+            ]
+        )
+    }
+
+    func testNonMatchingForegroundTitleSendsCtrlV() {
+        let api = FakeTextInjectorWindowsAPI()
+        api.foregroundTitle = "Notepad"
+        var logs: [String] = []
+
+        TextInjector.type(
+            "text",
+            owner: nil,
+            api: api,
+            xwaylandWindowTitlePrefix: "Xwayland on :",
+            xwaylandPasteShortcut: "alt+v",
+            log: { logs.append($0) }
+        )
+
+        let inputs = api.sentInputBatches.first
+        XCTAssertEqual(inputs?.map { $0.ki.wVk }, [WORD(0x11), WORD(0x56), WORD(0x56), WORD(0x11)])
+        XCTAssertEqual(
+            logs,
+            [
+                "[TextInjector] foreground window title does not match prefix; sending Ctrl+V",
+                "[TextInjector] dispatched Ctrl+V",
+            ]
+        )
+    }
+
+    func testUnreadableForegroundTitleFallsBackToCtrlV() {
+        let api = FakeTextInjectorWindowsAPI()
+        api.foregroundTitle = nil
+        var logs: [String] = []
+
+        TextInjector.type(
+            "text",
+            owner: nil,
+            api: api,
+            xwaylandWindowTitlePrefix: "Xwayland on :",
+            xwaylandPasteShortcut: "alt+v",
+            log: { logs.append($0) }
+        )
+
+        let inputs = api.sentInputBatches.first
+        XCTAssertEqual(inputs?.map { $0.ki.wVk }, [WORD(0x11), WORD(0x56), WORD(0x56), WORD(0x11)])
+        XCTAssertEqual(
+            logs,
+            [
+                "[TextInjector] foreground window title unreadable; falling back to Ctrl+V",
+                "[TextInjector] dispatched Ctrl+V",
+            ]
+        )
+    }
+
+    func testInvalidShortcutFallsBackToDefaultAltV() {
+        let api = FakeTextInjectorWindowsAPI()
+        api.foregroundTitle = "Xwayland on :0 (Ubuntu)"
+        var logs: [String] = []
+
+        TextInjector.type(
+            "text",
+            owner: nil,
+            api: api,
+            xwaylandWindowTitlePrefix: "Xwayland on :",
+            xwaylandPasteShortcut: "invalid",
+            log: { logs.append($0) }
+        )
+
+        let inputs = api.sentInputBatches.first
+        XCTAssertEqual(inputs?.map { $0.ki.wVk }, [WORD(0x12), WORD(0x56), WORD(0x56), WORD(0x12)])
+        XCTAssertTrue(logs.contains("[TextInjector] invalid xwaylandPasteShortcut 'invalid'; falling back to alt+v"))
+        XCTAssertTrue(logs.contains("[TextInjector] WSL Desktop Paste Target detected; sending alt+v"))
+    }
+
+    func testPartialXwaylandShortcutDispatchSendsOnlyNecessaryKeyUpCleanup() throws {
+        let cases: [(sent: UINT, expectedKeys: [WORD])] = [
+            (1, [0x12]),
+            (2, [0x56, 0x12]),
+            (3, [0x12]),
+        ]
+
+        for testCase in cases {
+            let api = FakeTextInjectorWindowsAPI()
+            api.foregroundTitle = "Xwayland on :0 (Ubuntu)"
+            api.sendResults = [
+                (testCase.sent, 5),
+                (UINT(testCase.expectedKeys.count), 0),
+            ]
+
+            TextInjector.type(
+                "text",
+                owner: nil,
+                api: api,
+                xwaylandWindowTitlePrefix: "Xwayland on :",
+                xwaylandPasteShortcut: "alt+v",
+                log: { _ in }
+            )
+
+            XCTAssertEqual(api.sentInputBatches.count, 2, "sent prefix: \(testCase.sent)")
+            let cleanup = api.sentInputBatches[1]
+            XCTAssertEqual(cleanup.map { $0.ki.wVk }, testCase.expectedKeys)
+            XCTAssertEqual(
+                cleanup.map { $0.ki.dwFlags },
+                Array(repeating: DWORD(KEYEVENTF_KEYUP), count: cleanup.count)
+            )
+        }
     }
 }
 
@@ -182,6 +363,15 @@ public func __allTests() -> [XCTestCaseEntry] {
             ("testZeroPasteEventsSentLogsFailureWithoutCleanupOrRetry", TextInjectorTests.testZeroPasteEventsSentLogsFailureWithoutCleanupOrRetry),
             ("testPartialPasteDispatchSendsOnlyNecessaryKeyUpCleanup", TextInjectorTests.testPartialPasteDispatchSendsOnlyNecessaryKeyUpCleanup),
             ("testCleanupFailureLogsImmediateErrorWithoutRetrying", TextInjectorTests.testCleanupFailureLogsImmediateErrorWithoutRetrying),
+            ("testPasteShortcutParsesAltV", TextInjectorTests.testPasteShortcutParsesAltV),
+            ("testPasteShortcutParsesMultipleModifiersCaseInsensitively", TextInjectorTests.testPasteShortcutParsesMultipleModifiersCaseInsensitively),
+            ("testPasteShortcutReturnsNilForInvalidStrings", TextInjectorTests.testPasteShortcutReturnsNilForInvalidStrings),
+            ("testWinConfigDefaultsAndCodableRoundTrip", TextInjectorTests.testWinConfigDefaultsAndCodableRoundTrip),
+            ("testMatchingForegroundTitleSendsXwaylandShortcut", TextInjectorTests.testMatchingForegroundTitleSendsXwaylandShortcut),
+            ("testNonMatchingForegroundTitleSendsCtrlV", TextInjectorTests.testNonMatchingForegroundTitleSendsCtrlV),
+            ("testUnreadableForegroundTitleFallsBackToCtrlV", TextInjectorTests.testUnreadableForegroundTitleFallsBackToCtrlV),
+            ("testInvalidShortcutFallsBackToDefaultAltV", TextInjectorTests.testInvalidShortcutFallsBackToDefaultAltV),
+            ("testPartialXwaylandShortcutDispatchSendsOnlyNecessaryKeyUpCleanup", TextInjectorTests.testPartialXwaylandShortcutDispatchSendsOnlyNecessaryKeyUpCleanup),
         ])
     ]
 }
@@ -215,6 +405,7 @@ private final class FakeTextInjectorWindowsAPI: TextInjectorWindowsAPI {
     var openedClipboardOwner: HWND?
     var openClipboardResults: [Bool] = []
     var sleepDurations: [DWORD] = []
+    var foregroundTitle: String?
 
     private var allocation: UnsafeMutableRawPointer?
     private var allocatedByteCount = 0
@@ -294,6 +485,10 @@ private final class FakeTextInjectorWindowsAPI: TextInjectorWindowsAPI {
 
     func lastError() -> DWORD {
         5
+    }
+
+    func foregroundWindowTitle() -> String? {
+        foregroundTitle
     }
 }
 #endif
