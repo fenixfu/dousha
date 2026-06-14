@@ -4,6 +4,22 @@ The Windows Port context defines the product language for Dousha's Windows editi
 
 ## Language
 
+### WSL Desktop Paste
+
+**WSL Desktop Paste Target**:
+A Windows foreground window that hosts a Linux Xwayland surface, recognized by a configurable window-title prefix.
+_Avoid_: WSL window, Linux window, X11 window
+
+**Xwayland Paste Shortcut**:
+The configurable key sequence DoushaWin sends to a WSL Desktop Paste Target instead of the standard paste shortcut.
+_Avoid_: Alt+V, Linux paste key, special paste shortcut
+
+**Foreground Paste Detection**:
+Inspecting the active window title at injection time to choose the appropriate paste shortcut for the current target.
+_Avoid_: process-based detection, recording-start detection, target caching
+
+### Windows Port
+
 **Windows Port**:
 The Windows edition of Dousha that preserves the core dictation experience while using Windows-native integrations.
 _Avoid_: Direct Swift port, macOS clone
@@ -175,6 +191,9 @@ _Avoid_: Per-sentence routing, transcript merging
 ## Relationships
 
 - The **Windows Port** preserves the **Core Dictation Experience**.
+- **Clipboard Paste Insertion** uses **Foreground Paste Detection** to decide whether the active target is a **WSL Desktop Paste Target**.
+- A **WSL Desktop Paste Target** receives the configured **Xwayland Paste Shortcut** instead of the standard paste shortcut.
+- **Foreground Paste Detection** inspects the active window title at injection time and falls back to the standard paste shortcut when the title cannot be read.
 - A **Post-Processing Strategy Evaluation** precedes the choice of the long-term Windows implementation.
 - A **Post-Processing Strategy Evaluation** compares **Doubao Text Post-Processing** with **Dictation Post-Processing** independently of whether the implementation uses .NET or Swift.
 - The **Windows Port** is delivered as a **Windows Tray Dictation App**.
@@ -264,6 +283,15 @@ _Avoid_: Per-sentence routing, transcript merging
 
 > **Dev:** "Does the Windows Port need the same menu-bar behavior as macOS?"
 > **Domain expert:** "No. It needs the Core Dictation Experience, surfaced as a Windows Tray Dictation App."
+>
+> **Dev:** "How should DoushaWin paste into a WSL desktop window?"
+> **Domain expert:** "Detect WSL Desktop Paste Targets by their window-title prefix at injection time, and send the configured Xwayland Paste Shortcut instead of the standard paste shortcut."
+>
+> **Dev:** "Should it detect Xwayland by process name or window class?"
+> **Domain expert:** "Use Foreground Paste Detection on the window title; the user can configure the prefix if their WSL setup uses a different title."
+>
+> **Dev:** "What if the active window title cannot be read due to privilege isolation?"
+> **Domain expert:** "Fall back to the standard paste shortcut; never block insertion because the detection failed."
 >
 > **Dev:** "Should the first Windows release include all engines and routing?"
 > **Domain expert:** "No. The First Usable Windows Version should prove the Single-Engine Dictation Path first."
@@ -480,6 +508,10 @@ _Avoid_: Per-sentence routing, transcript merging
 
 ## Flagged Ambiguities
 
+- "Xwayland detection" was resolved as **Foreground Paste Detection** using a configurable window-title prefix, not process-name or window-class matching.
+- "Xwayland paste key" was resolved as the configurable **Xwayland Paste Shortcut**, defaulting to `alt+v`.
+- "When to detect the Xwayland target" was resolved as at injection time, not at recording start.
+- "Window-title read failure" was resolved as a silent fallback to the standard paste shortcut.
 - "Multi-engine parallel routing" was resolved as outside the First Usable Windows Version.
 - "Generic cloud ASR MVP" was rejected; the First Usable Windows Version must include the Doubao Dictation Path.
 - "Manual Doubao token entry" was rejected; the First Usable Windows Version should manage Doubao Device Credentials automatically.
